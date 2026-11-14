@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { CSSProperties, FormEvent, PointerEvent } from 'react';
 import { createRoot } from 'react-dom/client';
 import { defaults, evaluate } from './animation';
@@ -11,7 +11,11 @@ import { adjacentEndpoint, animationTimelineSpan, CANVAS, DURATION, clamp, editA
 import type { Edge, Layer, Reorder } from './model';
 import { formatTime, Timeline } from './Timeline';
 import type { Selection } from './Timeline';
-import { registry, templates } from './templates';
+import { registry } from './templates';
+import { TemplateLibrary } from './TemplateLibrary';
+import { applyAutomaticAnimations } from './autoAnimation';
+import type { AnimationDensity } from './autoAnimation';
+import { AnimatedText } from './AnimatedText';
 import { FontPicker } from './FontPicker';
 import { createBrowserFontProvider, resolveTextFont } from './fonts';
 import type { FontOption } from './fonts';
@@ -582,8 +586,10 @@ function App() {
     finishEdit(cancel);
   }
 
-  function addAnimation(id: string) {
+  const addAnimation = useCallback((id: string) => {
     if (!layer || frame.current !== null) return;
+    const template = registry.get(id);
+    if (!template || (template.textOnly && layer.kind !== 'text')) return;
     const span = initialAnimationSpan(layer, clock.current);
     if (!span) {
       setAnimationError('再生位置からクリップの終了までに、アニメーションを追加できる1フレーム分の余裕がありません。');
@@ -591,11 +597,22 @@ function App() {
     }
     setAnimationError('');
     const clip = { id: crypto.randomUUID(), template: id, ...span,
-      params: defaults(registry.get(id)!) };
+      params: defaults(template) };
     updateLayer(layer.id, item => ({ ...item, animations: [...item.animations, clip] }));
     openLayer(layer.id);
     setSelection({ layerId: layer.id, animationId: clip.id });
-  }
+  }, [layer, history]);
+
+  const autoAnimate = useCallback((density: AnimationDensity) => {
+    if (!layer || !ready || frame.current !== null || timelineEditing.current || previewDrag.current) return;
+    const result = applyAutomaticAnimations(history.current.layers, layer.id, density);
+    if (result.added) {
+      setEditData(history.update(data => ({ ...data, layers: result.layers })));
+      setExpanded(current => new Set([...current, ...result.layers.filter(item =>
+        item.kind === 'text' && trackId(item) === trackId(layer) && item.animations.length).map(item => item.id)]));
+    }
+    return result;
+  }, [layer, ready, history]);
 
   function cut() {
     if (music) {
@@ -710,14 +727,7 @@ function App() {
       </div>
     </header>
     <div className="workspace">
-      <aside className="library">
-        <div className="panel-title"><Icon name="spark" size={17} /><h2>テンプレート</h2></div>
-        <p>レイヤーを選んでアニメーションを追加</p>
-        <div className="template-grid">{templates.map(item => <button type="button" key={item.id} disabled={!layer || playing}
-          className={`template-card ${item.tone}`} onClick={() => addAnimation(item.id)}>
-          <span className="template-icon"><Icon name={item.icon} size={22} /></span><span>{item.label}</span>
-        </button>)}</div>
-      </aside>
+      <TemplateLibrary kind={layer?.kind} playing={playing} onAdd={addAnimation} onAuto={autoAnimate} />
       <section className="monitor" aria-label="プレビュー">
         <div className="monitor-head"><h2>プレビュー</h2><span>1920 × 1080</span></div>
         <div className="stage">
@@ -728,6 +738,14 @@ function App() {
             }).reverse().map(item => {
               const pose = evaluate(item, time, registry);
               if (pose.opacity === 0 || pose.scale === 0) return null;
+              const unit = (value: number) => `${value * 100 / CANVAS.width}cqw`;
+              const filters = [
+                pose.blur && `blur(${unit(pose.blur)})`,
+                pose.hue && `hue-rotate(${pose.hue}deg)`,
+                pose.glow && `drop-shadow(0 0 ${unit(pose.glow)} ${pose.color})`,
+                pose.rgb && `drop-shadow(${unit(pose.rgb)} 0 0 #f03a6c) drop-shadow(${unit(-pose.rgb)} 0 0 #36cfff)`,
+                pose.trail && `drop-shadow(${unit(pose.trail)} 0 ${unit(Math.abs(pose.trail) / 4)} ${pose.color}66)`,
+              ].filter(Boolean).join(' ');
               const selected = !playing && layer?.id === item.id;
               const typography = item.kind === 'text' ? resolveTextFont(item, fontProvider) : undefined;
               const pointerHandlers = {
@@ -740,17 +758,20 @@ function App() {
                   left: `${pose.x / CANVAS.width * 100}%`, top: `${pose.y / CANVAS.height * 100}%`,
                   width: `${item.width / CANVAS.width * 100}%`, height: `${item.height / CANVAS.height * 100}%`,
                   fontSize: `${item.fontSize / CANVAS.width * 100}cqw`, opacity: pose.opacity,
-                  transform: `translate(-50%, -50%) rotate(${pose.rotation}deg) scale(${pose.scale})`,
+                  transform: `translate(-50%, -50%) rotate(${pose.rotation}deg) skewX(${pose.skew ?? 0}deg) scale(${pose.scale * (pose.scaleX ?? 1)}, ${pose.scale * (pose.scaleY ?? 1)})`,
                   color: pose.color,
                 }}>
                 <button type="button" aria-label={item.name} disabled={playing}
                   className={`canvas-content ${item.kind} ${selected ? 'canvas-selected' : ''}`}
-                  style={typography ? {
-                    fontFamily: typography.fontFamily, fontWeight: typography.fontWeight, fontStyle: typography.fontStyle,
-                  } : { backgroundColor: pose.color }}
+                  style={{
+                    ...(typography ? { fontFamily: typography.fontFamily, fontWeight: typography.fontWeight,
+                      fontStyle: typography.fontStyle } : { backgroundColor: pose.color }),
+                    filter: filters || undefined,
+                    clipPath: pose.slice ? `inset(${Math.min(pose.slice, 45)}% 0 0)` : undefined,
+                  }}
                   onClick={() => { setSelection({ layerId: item.id }); setSelectedMusicId(undefined); }}
                   onPointerDown={event => startPreviewDrag(event, item, pose)} {...pointerHandlers}>
-                  {item.kind === 'text' && item.text}
+                  {item.kind === 'text' && (pose.glyphs ? <AnimatedText text={item.text} effects={pose.glyphs} /> : item.text)}
                 </button>
                 {selected && corners.map(([label, corner]) => <button type="button" key={label}
                   aria-label={`${item.name}の${label}をリサイズ`} className="preview-handle"

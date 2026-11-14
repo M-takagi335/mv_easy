@@ -11,10 +11,15 @@ export function previewGeometry(base: Geometry, pose: Pose, dx: number, dy: numb
   const cos = Math.cos(angle);
   const sin = Math.sin(angle);
   const [horizontal, vertical] = corner;
-  const width = clamp(Math.round(base.width + horizontal * (dx * cos + dy * sin) / pose.scale), 1, CANVAS.width * 2);
-  const height = clamp(Math.round(base.height + vertical * (-dx * sin + dy * cos) / pose.scale), 1, CANVAS.height * 2);
-  const shiftX = horizontal * (width - base.width) * pose.scale / 2;
-  const shiftY = vertical * (height - base.height) * pose.scale / 2;
+  const sx = Math.max(0.001, pose.scale * (pose.scaleX ?? 1));
+  const sy = Math.max(0.001, pose.scale * (pose.scaleY ?? 1));
+  const shear = Math.tan((pose.skew ?? 0) * Math.PI / 180);
+  const localY = -dx * sin + dy * cos;
+  const localX = dx * cos + dy * sin - shear * localY;
+  const width = clamp(Math.round(base.width + horizontal * localX / sx), 1, CANVAS.width * 2);
+  const height = clamp(Math.round(base.height + vertical * localY / sy), 1, CANVAS.height * 2);
+  const shiftY = vertical * (height - base.height) * sy / 2;
+  const shiftX = horizontal * (width - base.width) * sx / 2 + shear * shiftY;
   return {
     x: Math.round(base.x + shiftX * cos - shiftY * sin),
     y: Math.round(base.y + shiftX * sin + shiftY * cos),

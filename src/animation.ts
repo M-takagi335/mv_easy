@@ -3,8 +3,17 @@ import type { Layer, Parameters } from './model.ts';
 
 export type Pose = {
   x: number; y: number; scale: number; rotation: number; opacity: number; color: string;
+  scaleX?: number; scaleY?: number; skew?: number; blur?: number; hue?: number; glow?: number;
+  rgb?: number; trail?: number; slice?: number;
+  glyphs?: GlyphEffect[];
 };
-type Contribution = Partial<Omit<Pose, 'color'>> & { color?: { target: string; weight: number } };
+export type GlyphPose = { x?: number; y?: number; rotation?: number; scale?: number; opacity?: number };
+export type GlyphEffect = { unit: string; sample: (index: number, count: number) => GlyphPose };
+type Contribution = Partial<Omit<Pose, 'color' | 'glyphs'>> & {
+  color?: { target: string; weight: number }; glyph?: GlyphEffect;
+};
+export const categories = ['登場・退場', '移動・浮遊', '回転・拡大縮小', 'バウンド・振動',
+  '文字アニメーション', '色変化', 'グリッチ・エフェクト', '変形・特殊'] as const;
 export type Control =
   | { key: string; label: string; initial: number; min: number; max: number; step: number }
   | { key: string; label: string; initial: string; options: [string, string][] }
@@ -14,6 +23,8 @@ export type Template = {
   label: string;
   icon: string;
   tone: string;
+  category: typeof categories[number];
+  textOnly?: boolean;
   controls: Control[];
   sample: (progress: number, params: Parameters) => Contribution;
 };
@@ -33,7 +44,7 @@ function mixColor(from: string, to: string, progress: number): string {
 }
 
 export function evaluate(layer: Layer, time: number, registry: ReadonlyMap<string, Template>): Pose {
-  let pose = { x: layer.x, y: layer.y, scale: 1, rotation: layer.rotation, opacity: 1, color: layer.color };
+  const pose: Pose = { x: layer.x, y: layer.y, scale: 1, rotation: layer.rotation, opacity: 1, color: layer.color };
   if (time < layer.start || time > layer.end || (layer.endExclusive && time === layer.end)) return { ...pose, opacity: 0 };
   for (const animation of layer.animations) {
     const template = registry.get(animation.template);
@@ -49,6 +60,13 @@ export function evaluate(layer: Layer, time: number, registry: ReadonlyMap<strin
     pose.scale *= effect.scale ?? 1;
     pose.opacity *= effect.opacity ?? 1;
     if (effect.color) pose.color = mixColor(pose.color, effect.color.target, effect.color.weight);
+    for (const key of ['scaleX', 'scaleY'] as const) {
+      if (effect[key] !== undefined) pose[key] = (pose[key] ?? 1) * effect[key];
+    }
+    for (const key of ['skew', 'blur', 'hue', 'glow', 'rgb', 'trail', 'slice'] as const) {
+      if (effect[key] !== undefined) pose[key] = (pose[key] ?? 0) + effect[key];
+    }
+    if (effect.glyph && layer.kind === 'text') (pose.glyphs ??= []).push(effect.glyph);
   }
   return pose;
 }

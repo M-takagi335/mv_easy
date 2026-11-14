@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { defaults, evaluate } from '../src/animation.ts';
+import { categories, defaults, evaluate } from '../src/animation.ts';
 import { previewGeometry } from '../src/geometry.ts';
 import { createHistory } from '../src/history.ts';
 import { moveSelection } from '../src/selection.ts';
@@ -12,6 +12,47 @@ import { registry, templates } from '../src/templates.ts';
 function clip(template, start, end) {
   return { id: template, template, start, end, params: defaults(registry.get(template)) };
 }
+
+test('catalog keeps all original IDs and each template has a distinct sampled effect', () => {
+  for (const id of ['fade-in', 'fade-out', 'slide-in', 'slide-out', 'grow', 'shrink', 'rotate', 'bounce', 'shake', 'color']) {
+    assert.ok(registry.has(id), id);
+  }
+  for (const category of categories) assert.ok(templates.some(item => item.category === category));
+  const signatures = new Map();
+  for (const item of templates) {
+    assert.ok(categories.includes(item.category));
+    const params = defaults(item);
+    const values = [0, 0.11, 0.32, 0.57, 0.83, 1].map(p => {
+      const { glyph, ...pose } = item.sample(p, params);
+      return glyph ? Array.from({ length: 9 }, (_, index) => glyph.sample(index, 9)) : pose;
+    });
+    const signature = JSON.stringify(values, (_, value) => {
+      if (typeof value !== 'number') return value;
+      assert.ok(Number.isFinite(value), item.id);
+      return Math.round(value * 1e6) / 1e6;
+    });
+    assert.ok(!signatures.has(signature), `${item.id} duplicates ${signatures.get(signature)}`);
+    signatures.set(signature, item.id);
+  }
+});
+
+test('glyph effects compose with transforms and resume at the same progress after a split', () => {
+  const layer = { ...newLayer('text', 1), text: '夜明け🌅', animations: [
+    clip('glyph-wave', 1, 5), clip('glyph-fade-in', 1.5, 4), clip('warp', 1, 5),
+  ] };
+  const [, right] = splitLayer(layer, 2.5);
+  for (const time of [2.5, 3, 4.5]) {
+    const before = evaluate(layer, time, registry);
+    const after = evaluate(right, time, registry);
+    assert.equal(before.glyphs.length, 2);
+    assert.ok(Math.abs(before.skew - after.skew) < 1e-9);
+    for (let i = 0; i < 2; i++) for (let index = 0; index < 4; index++) {
+      const a = before.glyphs[i].sample(index, 4);
+      const b = after.glyphs[i].sample(index, 4);
+      for (const key of Object.keys(a)) assert.ok(Math.abs(a[key] - b[key]) < 1e-9);
+    }
+  }
+});
 
 test('splitting at a displayed endpoint does not create a floating-point sliver', () => {
   const owner = { ...newLayer('text', 1), start: 0.1, end: 5,
@@ -119,7 +160,8 @@ test('overlapping animations compose and seeking back restores the same pose', (
 
 test('every built-in template produces finite values across its interval', () => {
   const layer = newLayer('ellipse', 1);
-  assert.equal(registry.size, 10);
+  assert.equal(registry.size, templates.length);
+  assert.ok(registry.size >= 50);
   for (const template of templates) {
     layer.animations = [clip(template.id, 1, 3)];
     for (const time of [0, 1, 1.5, 3, 7]) {

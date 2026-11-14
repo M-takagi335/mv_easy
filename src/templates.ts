@@ -1,4 +1,5 @@
 import type { Control, Template } from './animation.ts';
+import { additionalTemplates } from './additionalTemplates.ts';
 import type { Parameters } from './model.ts';
 
 const direction: Control = {
@@ -17,32 +18,33 @@ function slide(amount: number, params: Parameters) {
   return { x: x * offset, y: y * offset };
 }
 
-export const templates: Template[] = [
-  { id: 'fade-in', label: 'フェードイン', icon: 'fadeIn', tone: 'violet',
+const originalTemplates: Template[] = [
+  { id: 'fade-in', label: 'フェードイン', icon: 'fadeIn', tone: 'violet', category: '登場・退場',
     controls: [number('opacity', '開始時の不透明度 (%)', 0, 0, 100)],
     sample: (p, params) => ({ opacity: (1 - (1 - Number(params.opacity) / 100) * (1 - p)) }) },
-  { id: 'fade-out', label: 'フェードアウト', icon: 'fadeOut', tone: 'violet',
+  { id: 'fade-out', label: 'フェードアウト', icon: 'fadeOut', tone: 'violet', category: '登場・退場',
     controls: [number('opacity', '終了時の不透明度 (%)', 0, 0, 100)],
     sample: (p, params) => ({ opacity: (1 - (1 - Number(params.opacity) / 100) * p) }) },
-  { id: 'slide-in', label: 'スライドイン', icon: 'slideIn', tone: 'blue', controls: [direction, distance],
+  { id: 'slide-in', label: 'スライドイン', icon: 'slideIn', tone: 'blue', category: '登場・退場', controls: [direction, distance],
     sample: (p, params) => slide(1 - ease(p), params) },
-  { id: 'slide-out', label: 'スライドアウト', icon: 'slideOut', tone: 'blue', controls: [direction, distance],
+  { id: 'slide-out', label: 'スライドアウト', icon: 'slideOut', tone: 'blue', category: '登場・退場', controls: [direction, distance],
     sample: (p, params) => slide(ease(p), params) },
-  { id: 'grow', label: '拡大', icon: 'grow', tone: 'mint', controls: [number('scale', '最終サイズ (%)', 150, 100, 400)],
+  { id: 'grow', label: '拡大', icon: 'grow', tone: 'mint', category: '回転・拡大縮小', controls: [number('scale', '最終サイズ (%)', 150, 100, 400)],
     sample: (p, params) => ({ scale: (1 + (Number(params.scale) / 100 - 1) * ease(p)) }) },
-  { id: 'shrink', label: '縮小', icon: 'shrink', tone: 'mint', controls: [number('scale', '最終サイズ (%)', 50, 0, 100)],
+  { id: 'shrink', label: '縮小', icon: 'shrink', tone: 'mint', category: '回転・拡大縮小', controls: [number('scale', '最終サイズ (%)', 50, 0, 100)],
     sample: (p, params) => ({ scale: (1 + (Number(params.scale) / 100 - 1) * ease(p)) }) },
-  { id: 'rotate', label: '回転', icon: 'rotate', tone: 'peach', controls: [number('angle', '回転角度 (°)', 360, -1080, 1080, 5)],
+  { id: 'rotate', label: '回転', icon: 'rotate', tone: 'peach', category: '回転・拡大縮小', controls: [number('angle', '回転角度 (°)', 360, -1080, 1080, 5)],
     sample: (p, params) => ({ rotation: Number(params.angle) * ease(p) }) },
-  { id: 'bounce', label: 'バウンド', icon: 'bounce', tone: 'peach',
+  { id: 'bounce', label: 'バウンド', icon: 'bounce', tone: 'peach', category: 'バウンド・振動',
     controls: [strength, number('cycles', '回数', 3, 1, 12)],
     sample: (p, params) => ({ y: -Number(params.strength) * (1 - p) * Math.abs(Math.sin(Math.PI * Number(params.cycles) * p)) }) },
-  { id: 'shake', label: 'シェイク', icon: 'shake', tone: 'pink',
+  { id: 'shake', label: 'シェイク', icon: 'shake', tone: 'pink', category: 'バウンド・振動',
     controls: [strength, number('cycles', '回数', 5, 1, 20)],
     sample: (p, params) => ({ x: Number(params.strength) * (1 - p) * Math.sin(2 * Math.PI * Number(params.cycles) * p) }) },
-  { id: 'color', label: '色変化', icon: 'color', tone: 'pink',
+  { id: 'color', label: '色変化', icon: 'color', tone: 'pink', category: '色変化',
     controls: [{ key: 'color', label: '変化後の色', initial: '#b29aff', color: true }],
     sample: (p, params) => ({ color: { target: String(params.color), weight: p } }) },
 ];
 
+export const templates = [...originalTemplates, ...additionalTemplates];
 export const registry = new Map(templates.map(template => [template.id, template]));
