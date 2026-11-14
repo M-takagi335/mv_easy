@@ -460,7 +460,13 @@ function App() {
       if (!halves) return;
       setLayers(items => items.flatMap(item => item.id === layer.id ? halves : [item]));
       setSelection({ layerId: halves[1].id });
-      if (expanded.has(layer.id)) openLayer(halves[1].id);
+      setExpanded(current => {
+        if (!current.has(layer.id)) return current;
+        const next = new Set(current);
+        next.delete(layer.id);
+        halves.forEach(half => next.add(half.id));
+        return next;
+      });
     }
   }
 

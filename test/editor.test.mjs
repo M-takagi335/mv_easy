@@ -187,6 +187,40 @@ test('adding animations anchors the left edge at the playhead and trims only the
   assert.equal(initialAnimationSpan(lateOwner, 9.999), undefined);
 });
 
+test('a cut gives both clips independent identities and settings through move, delete, history and save', () => {
+  const original = { ...newLayer('text', 1), end: 10, animations: [
+    { ...clip('grow', 1, 3), phase: [0.1, 0.9] },
+    clip('slide-in', 4, 7),
+    clip('rotate', 8, 9),
+  ] };
+  const [left, right] = splitLayer(original, 5);
+  assert.equal(new Set([original.id, left.id, right.id]).size, 3);
+  assert.notEqual(left.animations, right.animations);
+  const animations = [...original.animations, ...left.animations, ...right.animations];
+  assert.equal(new Set(animations.map(item => item.id)).size, animations.length);
+  assert.equal(new Set(animations.map(item => item.params)).size, animations.length);
+  const phases = animations.flatMap(item => item.phase ? [item.phase] : []);
+  assert.equal(new Set(phases).size, phases.length);
+  const spans = owner => owner.animations.map(item => animationTimelineSpan(owner, item));
+  const history = createHistory([original], (a, b) => a === b);
+  history.update(() => [left, right]);
+  const moved = editLayerSpan(right, 'move', 5, 15, left.end);
+  history.update(() => [left, moved]);
+  assert.deepEqual(spans(left), [{ start: 1, end: 3 }, { start: 4, end: 5 }]);
+  assert.deepEqual(spans(moved), [{ start: 10, end: 12 }, { start: 13, end: 14 }]);
+  history.update(() => [{ ...left, animations: left.animations.slice(0, 1) }, moved]);
+  assert.deepEqual(spans(history.current[1]), spans(moved));
+  assert.deepEqual(history.step(false), [left, moved]);
+  assert.deepEqual(history.step(false), [left, right]);
+  assert.deepEqual(history.step(false), [original]);
+  history.step(true);
+  history.step(true);
+  const restored = unpackLayers(JSON.parse(JSON.stringify(packLayers(history.step(true)))));
+  assert.deepEqual(restored.map(spans), [[{ start: 1, end: 3 }], spans(moved)]);
+  assert.equal(restored[0].textTrackId, original.id);
+  assert.equal(restored[1].textTrackId, original.id);
+});
+
 test('legacy timings migrate, remain editable outside the owner and persist across a project round trip', () => {
   const layer = migrateAbsoluteAnimations({ ...newLayer('text', 1), start: 5, end: 10,
     animations: [clip('fade-in', 7, 8), clip('fade-in', 10, 10), clip('grow', 11, 13)] });

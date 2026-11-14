@@ -149,31 +149,36 @@ export function splitLayer(layer: Layer, time: number): [Layer, Layer] | undefin
   const offset = time - layer.start;
   const left: Animation[] = [];
   const right: Animation[] = [];
+  function copy(animation: Animation): Animation {
+    return {
+      ...animation,
+      id: crypto.randomUUID(),
+      params: { ...animation.params },
+      phase: animation.phase && [...animation.phase],
+    };
+  }
   for (const animation of layer.animations) {
     if (animation.end <= offset) {
-      left.push(animation);
+      left.push(copy(animation));
       continue;
     }
     const [from, to] = animation.phase ?? [0, 1];
     let rightStart = animation.start;
-    let rightPhase = animation.phase && [...animation.phase] as [number, number];
+    const next = copy(animation);
     if (animation.start < offset) {
       const progress = from + (to - from) * (offset - animation.start) / (animation.end - animation.start);
-      left.push({ ...animation, end: offset, phase: [from, progress] });
+      left.push({ ...copy(animation), end: offset, phase: [from, progress] });
       rightStart = offset;
-      rightPhase = [progress, to];
+      next.phase = [progress, to];
     }
     right.push({
-      ...animation,
-      id: crypto.randomUUID(),
-      params: { ...animation.params },
+      ...next,
       start: rightStart - offset,
       end: animation.end - offset,
-      phase: rightPhase,
     });
   }
   return [
-    { ...layer, textTrackId, end: time, endExclusive: true, animations: left },
+    { ...layer, textTrackId, id: crypto.randomUUID(), end: time, endExclusive: true, animations: left },
     { ...layer, textTrackId, id: crypto.randomUUID(), start: time, animations: right },
   ];
 }
