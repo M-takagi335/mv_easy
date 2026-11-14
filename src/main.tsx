@@ -30,7 +30,7 @@ import type { MusicAsset } from './project';
 import { defaultSettings, downloadFile, makeProjectFile, readProjectFile, uniqueProjectIds, validateProject } from './projectFile';
 import type { Settings } from './projectFile';
 import type { Project } from './project';
-import { ExportDialog } from './ExportDialog';
+import { ExportDialog, loadExportModule } from './ExportDialog';
 import { createHistory, equalProjectItems } from './history';
 import { independentSelection, moveSelection, selectionKey } from './selection';
 import './style.css';
@@ -287,6 +287,16 @@ function App() {
       .catch(() => setStorageError('プロジェクトを保存できませんでした。ブラウザーの空き容量を確認してください。'));
   }
 
+  async function saveAndReload() {
+    const data = history.current;
+    const project = projectData(data);
+    const write = saveQueue.current.then(() => saveProject(project, data.asset));
+    saveQueue.current = write.catch(() => {});
+    await write;
+    saved.current = { data, settings };
+    window.location.reload();
+  }
+
   function saveFile(packaged = false) {
     const data = history.current;
     try {
@@ -340,6 +350,17 @@ function App() {
     const timer = setTimeout(() => persistProject(history.current), 350);
     return () => clearTimeout(timer);
   }, [ready, layers, musicClips, asset, settings]);
+
+  useEffect(() => {
+    if (!ready) return;
+    const preload = () => { void loadExportModule().catch(() => {}); };
+    if (typeof window.requestIdleCallback === 'function') {
+      const job = window.requestIdleCallback(preload, { timeout: 2000 });
+      return () => window.cancelIdleCallback(job);
+    }
+    const job = window.setTimeout(preload, 1000);
+    return () => window.clearTimeout(job);
+  }, [ready]);
 
   useEffect(() => {
     const exit = (event: BeforeUnloadEvent) => {
@@ -814,7 +835,7 @@ function App() {
   return <main className="editor" ref={editor} style={{
     '--timeline-height': timelineHeight === null ? undefined : `${timelineHeight}px`,
   } as CSSProperties}>
-    {exportOpen && <ExportDialog settings={settings} onSettings={setSettings} onClose={() => setExportOpen(false)}
+    {exportOpen && <ExportDialog settings={settings} onSettings={setSettings} onClose={() => setExportOpen(false)} onReload={saveAndReload}
       snapshot={{ layers, clips: musicClips, asset, duration, fontProvider }} />}
     <input ref={projectPicker} type="file" hidden accept=".mveasy,.json"
       onChange={event => {
