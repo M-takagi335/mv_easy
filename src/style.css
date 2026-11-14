@@ -220,8 +220,8 @@ kbd { font: 10px Consolas, monospace; border: 1px solid #424157; border-radius: 
 .clip-edge.start { left: 0; }
 .clip-edge.end { right: 0; }
 .playhead-area { position: absolute; z-index: 2; inset: 0 var(--track-inset) 0 calc(var(--label-width) + var(--track-inset)); pointer-events: none; }
-.playhead { position: absolute; top: 21px; bottom: 0; width: 1px; background: #d199ff; }
-.playhead::before { content: ""; position: absolute; top: -3px; left: -4px; width: 9px; height: 8px; background: #d199ff; clip-path: polygon(0 0, 100% 0, 100% 55%, 50% 100%, 0 55%); }
+.playhead { position: absolute; top: 29px; bottom: 0; width: 1px; background: #d199ff; }
+.ruler-marker { position: absolute; bottom: 0; width: 9px; height: 9px; transform: translateX(-4px); background: #d199ff; pointer-events: none; clip-path: polygon(0 0, 100% 0, 100% 55%, 50% 100%, 0 55%); }
 @media (min-width: 1050px) {
   .library, .inspector { padding-inline: 16px; }
 }

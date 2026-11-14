@@ -178,10 +178,10 @@ export function Timeline({ layers, selection, expanded, time, duration, musicCli
     onEdit(target, edge, event.key === 'ArrowLeft' ? -STEP : STEP);
   }
 
-  function bar(layer: Layer, span: Span, target: Selection, caption: string, tone: string, content: ReactNode) {
+  function bar(layer: Layer, span: Span, target: Selection, caption: string, tone: string, content: ReactNode, timing = span) {
     const active = selection?.layerId === target.layerId && selection?.animationId === target.animationId;
     return <div className={`clip ${tone} ${active ? 'selected-clip' : ''}`} style={barStyle(span)}
-      title={`${formatTime(span.start)} — ${formatTime(span.end)}`}>
+      title={`${formatTime(timing.start)} — ${formatTime(timing.end)}`}>
       <button type="button" className="clip-body" aria-label={caption} aria-pressed={active} title={caption}
         onPointerDown={event => drag(event, target, 'move', layer)}
         onClick={() => onSelect(target)}>
@@ -316,7 +316,7 @@ export function Timeline({ layers, selection, expanded, time, duration, musicCli
                   if (event.currentTarget.hasPointerCapture(event.pointerId)) scrubPosition(event);
                 }}>
                   {bar(layer, visible, { layerId: layer.id, animationId: animation.id }, template.label,
-                    template.tone, <>{template.label}</>)}
+                    template.tone, <>{template.label}</>, animation)}
                 </div>
               </div>;
             })}

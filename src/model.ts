@@ -119,6 +119,17 @@ export function editLayerSpan(layer: Layer, edge: Edge, delta: number, duration 
 
 export function splitLayer(layer: Layer, time: number): [Layer, Layer] | undefined {
   if (!(time > layer.start && time < layer.end)) return;
+  if (layer.kind === 'text') {
+    const textTrackId = trackId(layer);
+    return [
+      { ...layer, textTrackId, end: time, endExclusive: true },
+      { ...layer, textTrackId, id: crypto.randomUUID(), start: time,
+        animations: layer.animations.map(animation => ({
+          ...animation, id: crypto.randomUUID(), params: { ...animation.params },
+          phase: animation.phase && [...animation.phase],
+        })) },
+    ];
+  }
   const left: Animation[] = [];
   const right: Animation[] = [];
   for (const animation of layer.animations) {
@@ -135,9 +146,8 @@ export function splitLayer(layer: Layer, time: number): [Layer, Layer] | undefin
       right.push({ ...copy, start: time, phase: [middle, phase[1]] });
     }
   }
-  const textTrackId = layer.kind === 'text' ? trackId(layer) : undefined;
-  return [{ ...layer, textTrackId, end: time, endExclusive: true, animations: left },
-    { ...layer, textTrackId, id: crypto.randomUUID(), start: time, animations: right }];
+  return [{ ...layer, end: time, endExclusive: true, animations: left },
+    { ...layer, id: crypto.randomUUID(), start: time, animations: right }];
 }
 
 export function newLayer(kind: Layer['kind'], number: number): Layer {

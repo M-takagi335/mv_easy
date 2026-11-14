@@ -116,6 +116,13 @@ test('a lyric cut shares a track, preserves animation progress and round-trips o
     const [left, right] = splitLayer(original, cut);
     assert.equal(left.end, right.start);
     assert.equal(left.fontFamily, right.fontFamily);
+    for (const [index, animation] of original.animations.entries()) {
+      assert.deepEqual(left.animations[index], animation);
+      assert.equal(right.animations[index].start, animation.start);
+      assert.equal(right.animations[index].end, animation.end);
+      assert.deepEqual(right.animations[index].params, animation.params);
+      assert.notEqual(right.animations[index].params, left.animations[index].params);
+    }
     assert.equal(evaluate(left, cut, registry).opacity, 0);
     for (const time of [cut - 0.01, cut, cut + 0.01, 9]) {
       const before = evaluate(original, time, registry);

@@ -461,8 +461,9 @@ function App() {
       return { ...item, animations: item.animations.map(clip => {
         if (clip.id !== target.animationId) return clip;
         const initial = source.animations.find(entry => entry.id === clip.id) ?? clip;
-        if (initial.start < item.start || initial.end > item.end || initial.start === initial.end) return clip;
-        return { ...clip, ...editSpan(initial, edge, delta, item) };
+        if (initial.start === initial.end) return clip;
+        const bounds = { start: Math.min(item.start, initial.start), end: Math.max(item.end, initial.end) };
+        return { ...clip, ...editSpan(initial, edge, delta, bounds) };
       }) };
     });
   }
