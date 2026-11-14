@@ -13,6 +13,16 @@ function clip(template, start, end) {
   return { id: template, template, start, end, params: defaults(registry.get(template)) };
 }
 
+test('splitting at a displayed endpoint does not create a floating-point sliver', () => {
+  const owner = { ...newLayer('text', 1), start: 0.1, end: 5,
+    animations: [clip('grow', 0.2, 0.6), clip('rotate', 0.6, 2)] };
+  const at = animationTimelineSpan(owner, owner.animations[0]).end;
+  const [left, right] = splitLayer(owner, at);
+  assert.deepEqual(left.animations.map(item => item.template), ['grow']);
+  assert.deepEqual(right.animations.map(item => item.template), ['rotate']);
+  assert.equal(right.animations[0].start, 0);
+});
+
 test('a grouped move preserves offsets, clamps the group together and moves a selected child only once', () => {
   const first = { ...newLayer('text', 1), start: 1, end: 5, animations: [clip('grow', 1, 2)] };
   const second = { ...newLayer('rectangle', 2), start: 7, end: 12, animations: [clip('rotate', 0, 1)] };

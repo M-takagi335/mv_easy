@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import type { CSSProperties, FormEvent, PointerEvent } from 'react';
 import { createRoot } from 'react-dom/client';
 import { defaults, evaluate } from './animation';
@@ -86,6 +86,9 @@ function App() {
   const [multiple, setMultiple] = useState<Selection[]>([]);
   const clipboard = useRef<{ data: EditData; targets: Selection[] } | null>(null);
   const groupDrag = useRef<{ data: EditData; targets: Selection[] } | null>(null);
+  const timelineEditing = useRef(false);
+  const saveQueue = useRef(Promise.resolve());
+  const sceneGroups = useMemo(() => groupLayers(layers), [layers]);
   const [ready, setReady] = useState(false);
   const [loadingMusic, setLoadingMusic] = useState(false);
   const [audioError, setAudioError] = useState('');
@@ -166,7 +169,7 @@ function App() {
     const origin = Math.min(...clips.map(item => item.start));
     let offset = duplicate ? Math.max(...clips.map(item => item.end)) - origin : clock.current - origin;
     // Preserve spacing by shifting the entire batch beyond any conflicting audio.
-    const compatibleAudio = data.asset && (!musicClips.length || data.musicClips[0]?.asset.id === musicClips[0].asset.id);
+    const compatibleAudio = !musicClips.length || data.musicClips[0]?.asset.id === musicClips[0].asset.id;
     if (compatibleAudio && data.musicClips.length && musicClips.length) {
       offset = Math.max(offset, Math.max(...musicClips.map(item => item.end)) - Math.min(...data.musicClips.map(item => item.start)));
     }
@@ -234,15 +237,16 @@ function App() {
       setReady(true);
     }).catch(() => {
       setStorageError('保存済みプロジェクトを開けませんでした。');
-      setReady(true);
+      // Retry loading on reload. Do not overwrite the saved project with the sample.
     });
   }, []);
 
   function persistProject(data: EditData) {
+    saveQueue.current = saveQueue.current.then(() =>
       saveProject({ layers: packLayers(data.layers), music: data.musicClips[0] ?? null,
-        musicClips: data.musicClips, animationTime: 'relative' }, data.asset).then(() => {
-        setStorageError('');
-      }).catch(() => setStorageError('プロジェクトを保存できませんでした。ブラウザーの空き容量を確認してください。'));
+        musicClips: data.musicClips, animationTime: 'relative' }, data.asset))
+      .then(() => setStorageError(''))
+      .catch(() => setStorageError('プロジェクトを保存できませんでした。ブラウザーの空き容量を確認してください。'));
   }
 
   useEffect(() => {
@@ -315,7 +319,7 @@ function App() {
       pause();
       return;
     }
-    if (!ready || loadingMusic) return;
+    if (!ready || loadingMusic || timelineEditing.current) return;
     finishPreviewDrag();
     if (clock.current >= duration) {
       clock.current = 0;
@@ -381,6 +385,7 @@ function App() {
     function onSpace(event: KeyboardEvent) {
       if (isEditing(event.target)) return;
       if (event.defaultPrevented || event.isComposing || event.keyCode === 229) return;
+      if (timelineEditing.current) return;
       const key = event.key.toLowerCase();
       if (event.ctrlKey && !event.altKey && !event.metaKey && !event.shiftKey) {
         if (key === 's') {
@@ -442,7 +447,7 @@ function App() {
             ? restored.layers.find(item => trackId(item) === trackId(layer) &&
               item.start <= clock.current && clock.current < item.end)
             : undefined;
-          const selected = splitSibling ?? restoredLayer;
+          const selected = restoredLayer ?? splitSibling;
           const animationId = selected?.animations.find(item => item.id === selection.animationId)?.id;
           setSelection(selected ? { layerId: selected.id, animationId } : null);
           if (selected && expanded.has(selection.layerId)) openLayer(selected.id);
@@ -475,6 +480,7 @@ function App() {
     function onJump(event: KeyboardEvent) {
       if (event.defaultPrevented || !event.altKey || event.shiftKey || event.ctrlKey || event.metaKey ||
           event.isComposing || event.keyCode === 229 || !['ArrowLeft', 'ArrowRight'].includes(event.key)) return;
+      if (timelineEditing.current) return;
       if (event.target instanceof Element &&
           event.target.closest('input, textarea, select, [contenteditable]:not([contenteditable="false"])')) return;
       event.preventDefault();
@@ -631,6 +637,7 @@ function App() {
   }
 
   function beginTimelineEdit(target: Selection, edge: Edge) {
+    timelineEditing.current = true;
     history.begin();
     const included = selectedItems.some(item => selectionKey(item) === selectionKey(target));
     if (edge === 'move' && included && selectedItems.length > 1) {
@@ -715,7 +722,7 @@ function App() {
         <div className="monitor-head"><h2>プレビュー</h2><span>1920 × 1080</span></div>
         <div className="stage">
           <div className="canvas" ref={canvas}>
-            {groupLayers(layers).flatMap(group => {
+            {sceneGroups.flatMap(group => {
               const nextStarts = new Set(group.map(item => item.start));
               return group.filter(item => item.end !== time || !nextStarts.has(time));
             }).reverse().map(item => {
@@ -906,7 +913,11 @@ function App() {
       }}
       playing={playing} onReorder={reorder}
       onSelect={selectItem} onSeek={seek} onEdit={edit}
-      onEditStart={beginTimelineEdit} onEditFinish={cancel => { groupDrag.current = null; finishEdit(cancel); }}
+      onEditStart={beginTimelineEdit} onEditFinish={cancel => {
+        timelineEditing.current = false;
+        groupDrag.current = null;
+        finishEdit(cancel);
+      }}
       onRename={(id, name) => {
         if (frame.current !== null) return;
         const previous = layers.find(item => trackId(item) === id)?.name;

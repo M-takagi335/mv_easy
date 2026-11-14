@@ -158,14 +158,15 @@ export function splitLayer(layer: Layer, time: number): [Layer, Layer] | undefin
     };
   }
   for (const animation of layer.animations) {
-    if (animation.end <= offset) {
+    const timeline = animationTimelineSpan(layer, animation);
+    if (timeline.end <= time) {
       left.push(copy(animation));
       continue;
     }
     const [from, to] = animation.phase ?? [0, 1];
     let rightStart = animation.start;
     const next = copy(animation);
-    if (animation.start < offset) {
+    if (timeline.start < time) {
       const progress = from + (to - from) * (offset - animation.start) / (animation.end - animation.start);
       left.push({ ...copy(animation), end: offset, phase: [from, progress] });
       rightStart = offset;
@@ -173,7 +174,7 @@ export function splitLayer(layer: Layer, time: number): [Layer, Layer] | undefin
     }
     right.push({
       ...next,
-      start: rightStart - offset,
+      start: Math.max(0, rightStart - offset),
       end: animation.end - offset,
     });
   }

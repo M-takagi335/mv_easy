@@ -42,7 +42,9 @@ export function Timeline({ layers, selection, selectedItems, expanded, time, dur
   playing, onReorder, onToggle, onSelect, onSeek, onEdit, onEditStart, onEditFinish, onRename }: TimelineProps) {
   const [drop, setDrop] = useState<Reorder | null>(null);
   const dragClick = useRef(false);
+  const stopDrag = useRef<(() => void) | null>(null);
   const selectedKeys = new Set(selectedItems.map(selectionKey));
+  useEffect(() => () => stopDrag.current?.(), []);
   const groups = useMemo(() => groupLayers(layers), [layers]);
   const [renaming, setRenaming] = useState<{ id: string; name: string }>();
   const [zoom, setZoom] = useState(1);
@@ -162,7 +164,7 @@ export function Timeline({ layers, selection, selectedItems, expanded, time, dur
     if (event.button !== 0) return;
     event.stopPropagation();
     dragClick.current = false;
-    if (playing) return;
+    if (playing || stopDrag.current) return;
     if (event.ctrlKey || event.shiftKey) return;
     const handle = event.currentTarget;
     handle.focus({ preventScroll: true });
@@ -186,16 +188,20 @@ export function Timeline({ layers, selection, selectedItems, expanded, time, dur
     const cancel = () => { cancelled = true; };
     function cancelOnEscape(event: globalThis.KeyboardEvent) {
       if (event.key !== 'Escape' || !handle.hasPointerCapture(pointerId)) return;
+      event.preventDefault();
       cancelled = true;
       handle.releasePointerCapture(pointerId);
     }
     const pointerId = event.pointerId;
     const finish = () => {
+      stopDrag.current = null;
       handle.removeEventListener('pointermove', move);
       handle.removeEventListener('pointercancel', cancel);
+      handle.removeEventListener('lostpointercapture', finish);
       window.removeEventListener('keydown', cancelOnEscape);
       if (dragged) onEditFinish(cancelled);
     };
+    stopDrag.current = () => { cancel(); finish(); };
     handle.addEventListener('pointermove', move);
     handle.addEventListener('pointercancel', cancel);
     window.addEventListener('keydown', cancelOnEscape);
