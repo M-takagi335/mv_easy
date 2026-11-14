@@ -42,14 +42,26 @@ export function Timeline({ layers, selection, expanded, time, duration, musicCli
   const [renaming, setRenaming] = useState<{ id: string; name: string }>();
   const [zoom, setZoom] = useState(1);
   const zoomRef = useRef(1);
+  const timelineRef = useRef<HTMLElement>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
   const rulerRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
+    const timeline = timelineRef.current!;
     const scroll = scrollRef.current!;
     const ruler = rulerRef.current!;
     function wheel(event: WheelEvent) {
+      if (event.ctrlKey) {
+        event.preventDefault();
+        const mode = event.deltaMode;
+        const delta = event.deltaY || event.deltaX;
+        const pixels = delta * (mode === 1 ? 16 : mode === 2 ? scroll.clientWidth : 1);
+        scroll.scrollLeft = clamp(scroll.scrollLeft + pixels, 0, scroll.scrollWidth - scroll.clientWidth);
+        return;
+      }
+      if (!scroll.contains(event.target as Node)) return;
       if (event.shiftKey || Math.abs(event.deltaX) > Math.abs(event.deltaY) || !event.deltaY) return;
+      if (event.target instanceof Element && event.target.closest('.layer-column, .layer-label, .empty-track')) return;
       const bounds = ruler.getBoundingClientRect();
       if (event.clientX < bounds.left || event.clientX > bounds.right) return;
       event.preventDefault();
@@ -62,8 +74,8 @@ export function Timeline({ layers, selection, expanded, time, duration, musicCli
       const resized = ruler.getBoundingClientRect();
       scroll.scrollLeft += resized.left + fraction * resized.width - event.clientX;
     }
-    scroll.addEventListener('wheel', wheel, { passive: false });
-    return () => scroll.removeEventListener('wheel', wheel);
+    timeline.addEventListener('wheel', wheel, { passive: false });
+    return () => timeline.removeEventListener('wheel', wheel);
   }, []);
   const waveform = useMemo(() => peaks && Array.from(peaks, (peak, i) => {
     const amplitude = Math.max(0.008, peak);
@@ -193,7 +205,7 @@ export function Timeline({ layers, selection, expanded, time, duration, musicCli
     onSeek(clamp((event.clientX - bounds.left) * duration / bounds.width, 0, duration));
   }
 
-  return <section className="timeline" aria-label="タイムライン">
+  return <section ref={timelineRef} className="timeline" aria-label="タイムライン">
     <div className="timeline-head">
       <h2><Icon name="panel" size={17} /> タイムライン</h2>
       <div className="timeline-tools">
@@ -220,6 +232,7 @@ export function Timeline({ layers, selection, expanded, time, duration, musicCli
             {Array.from({ length: 6 }, (_, index) => <span key={index} style={{ left: `${index * 20}%` }}>
               {formatTime(index * duration / 5).slice(0, -3)}
             </span>)}
+            <div className="ruler-marker" style={{ left: `${100 * time / duration}%` }} aria-hidden="true" />
           </div>
         </div>
         {musicClips.length > 0 && <div className="track-row music-row">

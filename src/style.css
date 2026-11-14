@@ -167,10 +167,18 @@ svg { flex-shrink: 0; vertical-align: middle; }
 .shortcut { color: var(--muted); font-size: 11px; white-space: nowrap; }
 kbd { font: 10px Consolas, monospace; border: 1px solid #424157; border-radius: 4px; padding: 1px 4px; color: #ddd8ef; }
 .tracks-scroll { overflow: auto; overscroll-behavior: contain; }
-.tracks-area { position: relative; min-width: 560px; min-height: 100%; }
+.tracks-area { position: relative; isolation: isolate; min-width: 560px; min-height: 100%; }
 .ruler-row, .track-row { display: grid; grid-template-columns: var(--label-width) minmax(0, 1fr); border-bottom: 1px solid #292a3b; }
-.ruler-row { height: 29px; position: sticky; top: 0; z-index: 2; background: #1d1e2b; }
-.layer-column, .layer-label, .empty-track { border-right: 1px solid var(--line); }
+.ruler-row { height: 29px; position: sticky; top: 0; z-index: 5; background: #1d1e2b; }
+/* The same scroll container owns both axes, so labels stay aligned with their tracks. */
+.layer-column, .layer-label, .empty-track, .empty-timeline {
+  position: sticky; left: 0; z-index: 3; border-right: 1px solid #414255;
+  background: var(--panel);
+}
+.layer-column, .animation-row .layer-label, .empty-track, .music-row .layer-label, .active-row .layer-label {
+  background: inherit;
+}
+.layer-column { z-index: 1; }
 .layer-column { padding-left: 20px; display: flex; gap: 8px; align-items: center; font-size: 11px; color: var(--muted); }
 .layer-column span { color: #d0c7e8; border-radius: 5px; padding: 1px 5px; background: #333046; }
 .ruler, .track { margin: 0 var(--track-inset); position: relative; touch-action: none; }
@@ -186,7 +194,7 @@ kbd { font: 10px Consolas, monospace; border: 1px solid #424157; border-radius: 
 .reorder-label:active { cursor: grabbing; }
 .drop-before, .drop-after { position: relative; }
 .drop-before::after, .drop-after::after {
-  content: ""; position: absolute; inset-inline: 0; height: 2px; z-index: 1;
+  content: ""; position: absolute; inset-inline: 0; height: 2px; z-index: 4;
   pointer-events: none; background: var(--accent);
 }
 .drop-before::after { top: 0; }
@@ -198,7 +206,7 @@ kbd { font: 10px Consolas, monospace; border: 1px solid #424157; border-radius: 
 .animation-row { height: 28px; background: #14151f; }
 .animation-row .layer-label, .empty-track { padding-left: 36px; }
 .empty-track, .empty-timeline { font-size: 11px; color: var(--muted); padding-top: 5px; }
-.empty-timeline { padding-left: 20px; }
+.empty-timeline { width: var(--label-width); padding: 5px 12px 5px 20px; }
 .clip {
   position: absolute; top: 4px; bottom: 4px; display: flex; background: var(--clip);
   color: var(--tone); border: 1px solid color-mix(in srgb, var(--tone) 36%, transparent); border-radius: 5px;
