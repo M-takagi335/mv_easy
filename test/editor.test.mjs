@@ -13,6 +13,20 @@ function clip(template, start, end) {
   return { id: template, template, start, end, params: defaults(registry.get(template)) };
 }
 
+test('new 3D, mask and glyph templates keep phase through splitting and project serialization', () => {
+  const layer = { ...newLayer('text', 1), text: '歌詞🌸\n次の行', start: 0, end: 5,
+    animations: ['tumble', 'iris-entry', 'glyph-firework'].map(id => clip(id, 1, 4)) };
+  const [left, right] = splitLayer(layer, 2);
+  assert.ok(right.animations.every((animation, index) => animation.id !== left.animations[index].id &&
+    animation.params !== left.animations[index].params));
+  const [restored] = unpackLayers(JSON.parse(JSON.stringify(packLayers([right]))));
+  const sample = item => {
+    const { glyphs, ...pose } = evaluate(item, 2.5, registry);
+    return { pose, glyph: glyphs[0].sample(2, 6) };
+  };
+  assert.deepEqual(sample(restored), sample(layer));
+});
+
 test('catalog keeps all original IDs and each template has a distinct sampled effect', () => {
   for (const id of ['fade-in', 'fade-out', 'slide-in', 'slide-out', 'grow', 'shrink', 'rotate', 'bounce', 'shake', 'color']) {
     assert.ok(registry.has(id), id);
@@ -163,7 +177,7 @@ test('every built-in template produces finite values across its interval', () =>
     : value && typeof value === 'object' ? Object.values(value).every(finite) : true;
   const layer = newLayer('ellipse', 1);
   assert.equal(registry.size, templates.length);
-  assert.ok(registry.size >= 100);
+  assert.ok(registry.size >= 150);
   for (const template of templates) {
     layer.animations = [clip(template.id, 1, 3)];
     for (const time of [0, 1, 1.5, 3, 7]) {

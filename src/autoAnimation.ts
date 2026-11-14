@@ -11,6 +11,7 @@ const exits = new Set(['fade-out', 'slide-out', 'pop-out', 'bounce-out', 'spin-o
   'glyph-crumble-exit', 'glyph-fade-out', 'glyph-scatter', 'collapse']);
 
 function roleOf(template: Template): Role {
+  if (template.automaticRole) return template.automaticRole;
   if (exits.has(template.id)) return 'exit';
   if (template.category === '登場・退場') return 'entrance';
   return 'motion';

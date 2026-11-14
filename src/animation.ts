@@ -5,6 +5,7 @@ export type Pose = {
   x: number; y: number; scale: number; rotation: number; opacity: number; color: string;
   scaleX?: number; scaleY?: number; skew?: number; blur?: number; hue?: number; glow?: number;
   rgb?: number; slice?: number;
+  tiltX?: number; tiltY?: number; reveal?: string;
   filters?: VisualFilter[];
   trails?: Trail[];
   lines?: { spacing: number; opacity: number; color: string; offset: number; bands?: number[] }[];
@@ -15,7 +16,7 @@ export type GlyphPose = { x?: number; y?: number; rotation?: number; scale?: num
   glow?: { color: string; radius: number } };
 export type GlyphEffect = { unit: string; sample: (index: number, count: number) => GlyphPose };
 export type VisualFilter =
-  | { kind: 'blur' | 'hue-rotate' | 'saturate' | 'brightness' | 'contrast' | 'grayscale' | 'invert'; value: number }
+  | { kind: 'blur' | 'hue-rotate' | 'saturate' | 'brightness' | 'contrast' | 'grayscale' | 'invert' | 'sepia'; value: number }
   | { kind: 'shadow'; x: number; y: number; blur: number; color: string }
   | { kind: 'directional'; x: number; y: number; strength: number };
 export type Trail = { count: number; interval: number; opacity: number; color?: string };
@@ -30,6 +31,7 @@ export type Control =
   | { key: string; label: string; initial: string; options: [string, string][] }
   | { key: string; label: string; initial: string; color: true };
 export type Template = {
+  automaticRole?: 'entrance' | 'motion' | 'exit';
   id: string;
   label: string;
   icon: string;
@@ -75,9 +77,10 @@ export function evaluate(layer: Layer, time: number, registry: ReadonlyMap<strin
     for (const key of ['scaleX', 'scaleY'] as const) {
       if (effect[key] !== undefined) pose[key] = (pose[key] ?? 1) * effect[key];
     }
-    for (const key of ['skew', 'blur', 'hue', 'glow', 'rgb', 'slice'] as const) {
+    for (const key of ['skew', 'blur', 'hue', 'glow', 'rgb', 'slice', 'tiltX', 'tiltY'] as const) {
       if (effect[key] !== undefined) pose[key] = (pose[key] ?? 0) + effect[key];
     }
+    if (effect.reveal) pose.reveal = effect.reveal;
     if (effect.filters) (pose.filters ??= []).push(...effect.filters);
     if (effect.trail && includeTrails) (pose.trails ??= []).push(effect.trail);
     if (effect.lines) (pose.lines ??= []).push(effect.lines);

@@ -43,7 +43,7 @@ export function Scene({ groups, time, fontProvider, renderObject }: {
       left: `${part.x / CANVAS.width * 100}%`, top: `${part.y / CANVAS.height * 100}%`,
       width: `${item.width / CANVAS.width * 100}%`, height: `${item.height / CANVAS.height * 100}%`,
       fontSize: unit(item.fontSize), opacity: part.opacity,
-      transform: `translate(-50%, -50%) rotate(${part.rotation}deg) skewX(${part.skew ?? 0}deg) scale(${part.scale * (part.scaleX ?? 1)}, ${part.scale * (part.scaleY ?? 1)})`,
+      transform: `translate(-50%, -50%) rotate(${part.rotation}deg) skewX(${part.skew ?? 0}deg) scale(${part.scale * (part.scaleX ?? 1)}, ${part.scale * (part.scaleY ?? 1)})${part.tiltX || part.tiltY ? ` perspective(${unit(2400)}) rotateX(${part.tiltX ?? 0}deg) rotateY(${part.tiltY ?? 0}deg)` : ''}`,
       color: part.color,
     });
     const textAt = (part: Pose) => part.glyphs ? <AnimatedText text={item.text} effects={part.glyphs} /> : item.text;
@@ -69,7 +69,7 @@ export function Scene({ groups, time, fontProvider, renderObject }: {
       filter: filters || undefined,
       backgroundImage: lines,
       backgroundPosition: pose.lines?.map(line => `0 ${unit(line.offset)}`).join(', '),
-      clipPath: pose.slice ? `inset(${Math.min(pose.slice, 45)}% 0 0)` : undefined,
+      clipPath: pose.reveal ?? (pose.slice ? `inset(${Math.min(pose.slice, 45)}% 0 0)` : undefined),
     });
     return <div key={item.id}>
       {visualFilters.map((filter, index) => {

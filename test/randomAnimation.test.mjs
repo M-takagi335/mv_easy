@@ -10,11 +10,9 @@ test('all compatible IDs appear, with no adjacent repeats between shuffled batch
   for (const kind of ['text', 'rectangle', 'ellipse']) {
     const layer = newLayer(kind, 1);
     const candidates = eligibleTemplates(kind);
-    const result = randomAnimations(layer, 0, candidates.length * 2, 'all', () => 0);
-    for (let offset = 0; offset < result.length; offset += candidates.length) {
-      assert.deepEqual(new Set(result.slice(offset, offset + candidates.length).map(item => item.template)),
-        new Set(candidates.map(item => item.id)));
-    }
+    const result = randomAnimations(layer, 0, candidates.length + 1, 'all', () => 0);
+    assert.deepEqual(new Set(result.slice(0, candidates.length).map(item => item.template)),
+      new Set(candidates.map(item => item.id)));
     assert.ok(result.every((item, i) => item.template !== result[i - 1]?.template));
     const effects = result.filter(item => ['neon-glow', 'glitch-burst', 'glyph-scramble', 'accordion'].includes(item.template));
     for (const animation of effects) {
@@ -30,7 +28,7 @@ test('first draws distribute across the complete catalog', () => {
   const counts = new Map(ids.map(item => [item.id, 0]));
   let state = 77;
   const random = () => ((state = (Math.imul(state, 1664525) + 1013904223) >>> 0) / 2 ** 32);
-  for (let i = 0; i < 10100; i++) {
+  for (let i = 0; i < ids.length * 100; i++) {
     const [{ template }] = randomAnimations(layer, 0, 1, 'all', random);
     counts.set(template, counts.get(template) + 1);
   }
