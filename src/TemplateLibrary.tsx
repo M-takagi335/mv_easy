@@ -3,15 +3,23 @@ import { categories } from './animation';
 import { templates } from './templates';
 import { Icon } from './Icon';
 import type { AnimationDensity } from './autoAnimation';
+import { RANDOM_BATCH_LIMIT } from './randomAnimation';
+import type { RandomGenre } from './randomAnimation';
 
-export const TemplateLibrary = memo(function TemplateLibrary({ kind, playing, onAdd, onAuto }: {
+export const TemplateLibrary = memo(function TemplateLibrary({ kind, playing, onAdd, onAuto, targetName, onRandom }: {
   kind?: string; playing: boolean; onAdd: (id: string) => void;
   onAuto: (density: AnimationDensity) => { added: number; affected: number } | undefined;
+  targetName?: string;
+  onRandom: (count: number, genre: RandomGenre) => number | undefined;
 }) {
   const [open, setOpen] = useState<string | null>(categories[0]);
   const [search, setSearch] = useState('');
   const [density, setDensity] = useState<AnimationDensity>('normal');
   const [result, setResult] = useState('');
+  const [randomOpen, setRandomOpen] = useState(false);
+  const [count, setCount] = useState('3');
+  const [genre, setGenre] = useState<RandomGenre>('all');
+  const [randomResult, setRandomResult] = useState('');
   const query = search.trim().normalize('NFKC').toLowerCase();
   const matches = templates.filter(item => item.label.normalize('NFKC').toLowerCase().includes(query));
   const cards = (items: typeof templates) => <div className="template-grid">{items.map(item => <button type="button"
@@ -22,6 +30,28 @@ export const TemplateLibrary = memo(function TemplateLibrary({ kind, playing, on
   </button>)}</div>;
   return <aside className="library">
     <div className="panel-title"><Icon name="spark" size={17} /><h2>テンプレート</h2></div>
+    <div className="auto-animation">
+      <button className="primary" type="button" disabled={!kind || playing} aria-expanded={randomOpen && Boolean(kind)}
+        onClick={() => { setRandomOpen(!randomOpen); setRandomResult(''); }}>🎲 ランダム追加</button>
+      {randomOpen && kind && <form className="auto-animation" onSubmit={event => {
+        event.preventDefault();
+        const added = onRandom(Number(count), genre);
+        if (added !== undefined) setRandomResult(added ? `${added}件追加しました。` : '対象クリップに1フレーム分の空き時間がないか、対応テンプレートがありません。');
+      }}>
+        <p className="random-target" title={targetName}>対象 {targetName}</p>
+        <label>追加個数<input type="number" required min={1} max={RANDOM_BATCH_LIMIT} step={1} value={count}
+          onChange={event => { setCount(event.target.value); setRandomResult(''); }} /></label>
+        <label>対象ジャンル<select value={genre} onChange={event => {
+          setGenre(event.target.value as RandomGenre); setRandomResult('');
+        }}>
+          <option value="all">すべて</option>
+          {categories.map(category => <option key={category}>{category}</option>)}
+        </select></label>
+        {Number(count) > 30 && <p>大量の効果を重ねるとプレビューが重くなることがあります。</p>}
+        <button className="primary" type="submit" disabled={playing}>適用</button>
+        {randomResult && <p role="status">{randomResult}</p>}
+      </form>}
+    </div>
     {kind === 'text' && <div className="auto-animation">
       <label>アニメーション数<select value={density} disabled={playing}
         onChange={event => setDensity(event.target.value as AnimationDensity)}>

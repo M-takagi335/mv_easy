@@ -13,6 +13,8 @@ import { formatTime, Timeline } from './Timeline';
 import type { Selection } from './Timeline';
 import { registry } from './templates';
 import { TemplateLibrary } from './TemplateLibrary';
+import { randomAnimations } from './randomAnimation';
+import type { RandomGenre } from './randomAnimation';
 import { applyAutomaticAnimations } from './autoAnimation';
 import type { AnimationDensity } from './autoAnimation';
 import { AnimatedText } from './AnimatedText';
@@ -603,6 +605,19 @@ function App() {
     setSelection({ layerId: layer.id, animationId: clip.id });
   }, [layer, history]);
 
+  const addRandom = useCallback((count: number, genre: RandomGenre) => {
+    if (!layer || !ready || frame.current !== null || timelineEditing.current || previewDrag.current) return;
+    const target = history.current.layers.find(item => item.id === layer.id);
+    if (!target) return;
+    const additions = randomAnimations(target, clock.current, count, genre);
+    if (!additions.length) return 0;
+    setEditData(history.update(data => ({ ...data, layers: data.layers.map(item =>
+      item.id === target.id ? { ...item, animations: [...item.animations, ...additions] } : item) })));
+    openLayer(target.id);
+    setSelection({ layerId: target.id, animationId: additions[0].id });
+    return additions.length;
+  }, [layer, ready, history]);
+
   const autoAnimate = useCallback((density: AnimationDensity) => {
     if (!layer || !ready || frame.current !== null || timelineEditing.current || previewDrag.current) return;
     const result = applyAutomaticAnimations(history.current.layers, layer.id, density);
@@ -727,7 +742,9 @@ function App() {
       </div>
     </header>
     <div className="workspace">
-      <TemplateLibrary kind={layer?.kind} playing={playing} onAdd={addAnimation} onAuto={autoAnimate} />
+      <TemplateLibrary kind={layer?.kind} playing={playing} onAdd={addAnimation} onAuto={autoAnimate}
+        targetName={layer ? (layer.kind === 'text' ? layer.text || layer.name : layer.name) : undefined}
+        onRandom={addRandom} />
       <section className="monitor" aria-label="プレビュー">
         <div className="monitor-head"><h2>プレビュー</h2><span>1920 × 1080</span></div>
         <div className="stage">

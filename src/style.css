@@ -64,6 +64,9 @@ svg { flex-shrink: 0; vertical-align: middle; }
 .auto-animation select { padding: 3px; border: 1px solid var(--line); border-radius: 4px; background: #11121c; }
 .auto-animation button { padding: 7px 4px; }
 .auto-animation p { margin: 0; }
+.auto-animation form { margin: 0; }
+.auto-animation input { width: 62px; background: #11121c; border: 1px solid var(--line); border-radius: 4px; color: inherit; }
+.auto-animation .random-target { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .template-search { width: 100%; padding: 7px; margin-bottom: 7px; background: #11121c; color: inherit; border: 1px solid var(--line); border-radius: 5px; font-size: 11px; }
 .template-folder { display: flex; align-items: center; gap: 6px; width: 100%; padding: 7px 3px; text-align: left; font-size: 12px; }
 .template-folder:hover, .template-folder[aria-expanded="true"] { color: var(--accent); }
