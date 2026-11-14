@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { categories, defaults, evaluate } from '../src/animation.ts';
+import { categories, defaults, evaluate, sampleTrails } from '../src/animation.ts';
 import { previewGeometry } from '../src/geometry.ts';
 import { createHistory } from '../src/history.ts';
 import { moveSelection } from '../src/selection.ts';
@@ -159,6 +159,8 @@ test('overlapping animations compose and seeking back restores the same pose', (
 });
 
 test('every built-in template produces finite values across its interval', () => {
+  const finite = value => typeof value === 'number' ? Number.isFinite(value)
+    : value && typeof value === 'object' ? Object.values(value).every(finite) : true;
   const layer = newLayer('ellipse', 1);
   assert.equal(registry.size, templates.length);
   assert.ok(registry.size >= 50);
@@ -167,9 +169,37 @@ test('every built-in template produces finite values across its interval', () =>
     for (const time of [0, 1, 1.5, 3, 7]) {
       const { color, ...values } = evaluate(layer, time, registry);
       assert.match(color, /^#[0-9a-f]{6}$/i);
-      assert.ok(Object.values(values).every(Number.isFinite), template.id);
+      assert.ok(finite(values), template.id);
     }
   }
+});
+
+test('visual effects compose, survive serialization and stop outside their bars', () => {
+  const layer = { ...newLayer('rectangle', 1), start: 2, end: 8,
+    animations: ['neon-glow', 'directional-blur', 'invert', 'digital-noise', 'scanlines'].map(id => clip(id, 1, 4)) };
+  const pose = evaluate(layer, 4.5, registry);
+  assert.deepEqual(pose.filters.map(filter => filter.kind), ['shadow', 'shadow', 'directional', 'invert']);
+  assert.equal(pose.lines.length, 2);
+  assert.deepEqual(evaluate(JSON.parse(JSON.stringify(layer)), 4.5, registry), pose);
+  const [left, right] = splitLayer(layer, 4);
+  assert.notEqual(left.animations[0].params, right.animations[0].params);
+  assert.notEqual(left.animations[0].id, right.animations[0].id);
+  assert.deepEqual(evaluate(right, 4.5, registry), pose);
+  assert.equal(evaluate(layer, 6, registry).filters, undefined);
+  assert.equal(evaluate(layer, 6, registry).lines, undefined);
+});
+
+test('trail samples past movement at fixed timestamps independently of playback order', () => {
+  const layer = { ...newLayer('rectangle', 1), start: 0, end: 5,
+    animations: [clip('slide-in', 0, 4), clip('color-trail', 0, 3)] };
+  const at = time => sampleTrails(layer, time, evaluate(layer, time, registry), registry);
+  const first = at(1);
+  const interval = layer.animations[1].params.interval;
+  assert.equal(first.length, 4);
+  assert.equal(first.at(-1).x, evaluate(layer, 1 - interval, registry).x);
+  assert.notEqual(first.at(-1).x, evaluate(layer, 1, registry).x);
+  assert.deepEqual(at(3), []);
+  assert.deepEqual(at(1), first);
 });
 
 test('animation endpoints snap and respect the layer bounds and minimum duration', () => {

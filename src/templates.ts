@@ -1,5 +1,6 @@
 import type { Control, Template } from './animation.ts';
 import { additionalTemplates } from './additionalTemplates.ts';
+import { visualEffects } from './visualEffects.ts';
 import type { Parameters } from './model.ts';
 
 const direction: Control = {
@@ -46,5 +47,5 @@ const originalTemplates: Template[] = [
     sample: (p, params) => ({ color: { target: String(params.color), weight: p } }) },
 ];
 
-export const templates = [...originalTemplates, ...additionalTemplates];
+export const templates = [...originalTemplates, ...additionalTemplates, ...visualEffects];
 export const registry = new Map(templates.map(template => [template.id, template]));

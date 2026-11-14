@@ -7,7 +7,7 @@ export type AnimationDensity = 'low' | 'normal' | 'high';
 const counts = { low: 1, normal: 2, high: 3 };
 const pools = {
   entrance: ['fade-in', 'slide-in', 'pop-in', 'spin-in', 'glyph-fade-in'],
-  motion: ['float', 'pulse', 'glyph-wave', 'tremble', 'glow'],
+  motion: ['float', 'pulse', 'glyph-wave', 'tremble', 'glow', 'pulse-glow', 'neon-glow', 'color-trail', 'saturation'],
   exit: ['fade-out', 'slide-out', 'pop-out', 'spin-out', 'glyph-fade-out'],
 } as const;
 

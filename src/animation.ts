@@ -4,13 +4,22 @@ import type { Layer, Parameters } from './model.ts';
 export type Pose = {
   x: number; y: number; scale: number; rotation: number; opacity: number; color: string;
   scaleX?: number; scaleY?: number; skew?: number; blur?: number; hue?: number; glow?: number;
-  rgb?: number; trail?: number; slice?: number;
+  rgb?: number; slice?: number;
+  filters?: VisualFilter[];
+  trails?: Trail[];
+  lines?: { spacing: number; opacity: number; color: string; offset: number; bands?: number[] }[];
   glyphs?: GlyphEffect[];
 };
 export type GlyphPose = { x?: number; y?: number; rotation?: number; scale?: number; opacity?: number };
 export type GlyphEffect = { unit: string; sample: (index: number, count: number) => GlyphPose };
-type Contribution = Partial<Omit<Pose, 'color' | 'glyphs'>> & {
+export type VisualFilter =
+  | { kind: 'blur' | 'hue-rotate' | 'saturate' | 'brightness' | 'contrast' | 'grayscale' | 'invert'; value: number }
+  | { kind: 'shadow'; x: number; y: number; blur: number; color: string }
+  | { kind: 'directional'; x: number; y: number; strength: number };
+export type Trail = { count: number; interval: number; opacity: number; color?: string };
+type Contribution = Partial<Omit<Pose, 'color' | 'glyphs' | 'filters' | 'trails' | 'lines'>> & {
   color?: { target: string; weight: number }; glyph?: GlyphEffect;
+  filters?: VisualFilter[]; trail?: Trail; lines?: NonNullable<Pose['lines']>[number];
 };
 export const categories = ['登場・退場', '移動・浮遊', '回転・拡大縮小', 'バウンド・振動',
   '文字アニメーション', '色変化', 'グリッチ・エフェクト', '変形・特殊'] as const;
@@ -25,6 +34,7 @@ export type Template = {
   tone: string;
   category: typeof categories[number];
   textOnly?: boolean;
+  activeOnly?: boolean;
   controls: Control[];
   sample: (progress: number, params: Parameters) => Contribution;
 };
@@ -43,13 +53,13 @@ function mixColor(from: string, to: string, progress: number): string {
   }).join('');
 }
 
-export function evaluate(layer: Layer, time: number, registry: ReadonlyMap<string, Template>): Pose {
+export function evaluate(layer: Layer, time: number, registry: ReadonlyMap<string, Template>, includeTrails = true): Pose {
   const pose: Pose = { x: layer.x, y: layer.y, scale: 1, rotation: layer.rotation, opacity: 1, color: layer.color };
   if (time < layer.start || time > layer.end || (layer.endExclusive && time === layer.end)) return { ...pose, opacity: 0 };
   for (const animation of layer.animations) {
     const template = registry.get(animation.template);
     const { start, end } = animationTimelineSpan(layer, animation);
-    if (!template || time < start) continue;
+    if (!template || time < start || (template.activeOnly && time >= end)) continue;
     const [from, to] = animation.phase ?? [0, 1];
     const fraction = end === start ? 1 : clamp((time - start) / (end - start), 0, 1);
     const progress = from + (to - from) * fraction;
@@ -63,10 +73,27 @@ export function evaluate(layer: Layer, time: number, registry: ReadonlyMap<strin
     for (const key of ['scaleX', 'scaleY'] as const) {
       if (effect[key] !== undefined) pose[key] = (pose[key] ?? 1) * effect[key];
     }
-    for (const key of ['skew', 'blur', 'hue', 'glow', 'rgb', 'trail', 'slice'] as const) {
+    for (const key of ['skew', 'blur', 'hue', 'glow', 'rgb', 'slice'] as const) {
       if (effect[key] !== undefined) pose[key] = (pose[key] ?? 0) + effect[key];
     }
+    if (effect.filters) (pose.filters ??= []).push(...effect.filters);
+    if (effect.trail && includeTrails) (pose.trails ??= []).push(effect.trail);
+    if (effect.lines) (pose.lines ??= []).push(effect.lines);
     if (effect.glyph && layer.kind === 'text') (pose.glyphs ??= []).push(effect.glyph);
   }
   return pose;
+}
+
+export function sampleTrails(layer: Layer, time: number, pose: Pose, registry: ReadonlyMap<string, Template>) {
+  const copies: Pose[] = [];
+  for (const trail of pose.trails ?? []) {
+    for (let index = 1; index <= trail.count && copies.length < 12; index++) {
+      const past = evaluate(layer, time - trail.interval * index, registry, false);
+      if (past.opacity <= 0 || past.scale <= 0) continue;
+      copies.push({ ...past, color: trail.color ?? past.color,
+        opacity: past.opacity * trail.opacity * (1 - (index - 1) / trail.count) });
+    }
+    if (copies.length >= 12) break;
+  }
+  return copies.reverse();
 }

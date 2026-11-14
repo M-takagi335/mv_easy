@@ -104,6 +104,8 @@ svg { flex-shrink: 0; vertical-align: middle; }
 }
 .canvas-content.ellipse { border-radius: 50%; }
 .canvas-content.text { font-synthesis: weight style; }
+.canvas-content.trail-copy { pointer-events: none; }
+.effect-definitions { position: absolute; pointer-events: none; }
 .canvas-content:disabled { opacity: 1; pointer-events: none; }
 .canvas-selected { outline: 1px solid #d4bcff; }
 .preview-handle {

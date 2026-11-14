@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { CSSProperties, FormEvent, PointerEvent } from 'react';
 import { createRoot } from 'react-dom/client';
-import { defaults, evaluate } from './animation';
+import { defaults, evaluate, sampleTrails } from './animation';
 import { exampleLayers } from './example';
 import { previewGeometry } from './geometry';
 import type { Corner, Geometry } from './geometry';
@@ -754,14 +754,24 @@ function App() {
               return group.filter(item => item.end !== time || !nextStarts.has(time));
             }).reverse().map(item => {
               const pose = evaluate(item, time, registry);
-              if (pose.opacity === 0 || pose.scale === 0) return null;
+              const pastPoses = pose.trails ? sampleTrails(item, time, pose, registry) : [];
+              if ((pose.opacity === 0 || pose.scale === 0) && pastPoses.length === 0) return null;
               const unit = (value: number) => `${value * 100 / CANVAS.width}cqw`;
+              const visualFilters = (pose.filters ?? []).filter(filter =>
+                filter.kind !== 'directional' || (filter.strength > 0 && (filter.x !== 0 || filter.y !== 0)));
+              const filterId = (index: number) => `directional-${item.id}-${index}`;
               const filters = [
                 pose.blur && `blur(${unit(pose.blur)})`,
                 pose.hue && `hue-rotate(${pose.hue}deg)`,
                 pose.glow && `drop-shadow(0 0 ${unit(pose.glow)} ${pose.color})`,
                 pose.rgb && `drop-shadow(${unit(pose.rgb)} 0 0 #f03a6c) drop-shadow(${unit(-pose.rgb)} 0 0 #36cfff)`,
-                pose.trail && `drop-shadow(${unit(pose.trail)} 0 ${unit(Math.abs(pose.trail) / 4)} ${pose.color}66)`,
+                ...visualFilters.map((filter, index) => {
+                  if (filter.kind === 'shadow') return `drop-shadow(${unit(filter.x)} ${unit(filter.y)} ${unit(filter.blur)} ${filter.color})`;
+                  if (filter.kind === 'directional') return `url("#${filterId(index)}")`;
+                  const value = filter.kind === 'blur' ? unit(filter.value)
+                    : filter.kind === 'hue-rotate' ? `${filter.value}deg` : filter.value;
+                  return `${filter.kind}(${value})`;
+                }),
               ].filter(Boolean).join(' ');
               const selected = !playing && layer?.id === item.id;
               const typography = item.kind === 'text' ? resolveTextFont(item, fontProvider) : undefined;
@@ -770,25 +780,66 @@ function App() {
                 onPointerCancel: (event: PointerEvent<HTMLButtonElement>) => finishPreviewDrag(event.pointerId, true),
                 onLostPointerCapture: (event: PointerEvent<HTMLButtonElement>) => finishPreviewDrag(event.pointerId),
               };
-              return <div key={item.id} className="canvas-object"
-                style={{
-                  left: `${pose.x / CANVAS.width * 100}%`, top: `${pose.y / CANVAS.height * 100}%`,
+              const placement = (part: Pose) => ({
+                  left: `${part.x / CANVAS.width * 100}%`, top: `${part.y / CANVAS.height * 100}%`,
                   width: `${item.width / CANVAS.width * 100}%`, height: `${item.height / CANVAS.height * 100}%`,
-                  fontSize: `${item.fontSize / CANVAS.width * 100}cqw`, opacity: pose.opacity,
-                  transform: `translate(-50%, -50%) rotate(${pose.rotation}deg) skewX(${pose.skew ?? 0}deg) scale(${pose.scale * (pose.scaleX ?? 1)}, ${pose.scale * (pose.scaleY ?? 1)})`,
-                  color: pose.color,
-                }}>
+                  fontSize: unit(item.fontSize), opacity: part.opacity,
+                  transform: `translate(-50%, -50%) rotate(${part.rotation}deg) skewX(${part.skew ?? 0}deg) scale(${part.scale * (part.scaleX ?? 1)}, ${part.scale * (part.scaleY ?? 1)})`,
+                  color: part.color,
+              });
+              const textAt = (part: Pose) => part.glyphs ? <AnimatedText text={item.text} effects={part.glyphs} /> : item.text;
+              const lineEffects = pose.lines;
+              const lines = lineEffects?.map(line => {
+                const spacing = Math.max(2, line.spacing);
+                const color = line.color + Math.round(line.opacity * 255).toString(16).padStart(2, '0');
+                if (line.bands) {
+                  const stops = line.bands.map((edge, index) => index % 2 === 0
+                    ? `transparent ${unit(edge)}, ${color} ${unit(edge)}`
+                    : `${color} ${unit(edge)}, transparent ${unit(edge)}`);
+                  return `repeating-linear-gradient(0deg, transparent 0, ${stops.join(', ')}, transparent ${unit(spacing)})`;
+                }
+                return `repeating-linear-gradient(0deg, transparent 0 ${unit(spacing - 1)}, ${color} ${unit(spacing - 1)} ${unit(spacing)})`;
+              }).join(', ');
+              return <div key={item.id}>
+                {visualFilters.map((filter, index) => {
+                  if (filter.kind !== 'directional') return null;
+                  const dx = filter.x / item.width;
+                  const dy = filter.y / item.height;
+                  const taps = [0.2, 0.4, 0.6, 0.8, 1];
+                  return <svg key={index} width="0" height="0" className="effect-definitions" aria-hidden="true">
+                    <filter id={filterId(index)} primitiveUnits="objectBoundingBox" colorInterpolationFilters="sRGB"
+                      x={-0.2 - Math.abs(dx)} y={-0.2 - Math.abs(dy)} width={1.4 + 2 * Math.abs(dx)} height={1.4 + 2 * Math.abs(dy)}>
+                      <feComponentTransfer in="SourceGraphic" result="faint">
+                        <feFuncA type="linear" slope={filter.strength / 4} />
+                      </feComponentTransfer>
+                      {taps.map(tap => <feOffset key={tap} in="faint" dx={dx * tap} dy={dy * tap} result={`tap${tap}`} />)}
+                      <feMerge>
+                        {taps.slice().reverse().map(tap => <feMergeNode key={tap} in={`tap${tap}`} />)}
+                        <feMergeNode in="SourceGraphic" />
+                      </feMerge>
+                    </filter>
+                  </svg>;
+                })}
+                {pastPoses.map((past, index) =>
+                  <div className="canvas-object" aria-hidden="true" key={index} style={placement(past)}>
+                    <div className={`canvas-content trail-copy ${item.kind}`} style={typography ? {
+                      fontFamily: typography.fontFamily, fontWeight: typography.fontWeight, fontStyle: typography.fontStyle,
+                    } : { backgroundColor: past.color }}>{item.kind === 'text' && textAt(past)}</div>
+                  </div>)}
+                <div className="canvas-object" style={placement(pose)}>
                 <button type="button" aria-label={item.name} disabled={playing}
                   className={`canvas-content ${item.kind} ${selected ? 'canvas-selected' : ''}`}
                   style={{
                     ...(typography ? { fontFamily: typography.fontFamily, fontWeight: typography.fontWeight,
                       fontStyle: typography.fontStyle } : { backgroundColor: pose.color }),
                     filter: filters || undefined,
+                    backgroundImage: lines,
+                    backgroundPosition: lineEffects?.map(line => `0 ${unit(line.offset)}`).join(', '),
                     clipPath: pose.slice ? `inset(${Math.min(pose.slice, 45)}% 0 0)` : undefined,
                   }}
                   onClick={() => { setSelection({ layerId: item.id }); setSelectedMusicId(undefined); }}
                   onPointerDown={event => startPreviewDrag(event, item, pose)} {...pointerHandlers}>
-                  {item.kind === 'text' && (pose.glyphs ? <AnimatedText text={item.text} effects={pose.glyphs} /> : item.text)}
+                  {item.kind === 'text' && textAt(pose)}
                 </button>
                 {selected && corners.map(([label, corner]) => <button type="button" key={label}
                   aria-label={`${item.name}の${label}をリサイズ`} className="preview-handle"
@@ -796,6 +847,7 @@ function App() {
                     cursor: corner[0] === corner[1] ? 'nwse-resize' : 'nesw-resize',
                     transform: `translate(-50%, -50%) scale(${1 / pose.scale})` }}
                   onPointerDown={event => startPreviewDrag(event, item, pose, corner)} {...pointerHandlers} />)}
+                </div>
               </div>;
             })}
           </div>
@@ -865,7 +917,7 @@ function App() {
             <div className="clip-range">{formatTime(animationRange!.start)} — {formatTime(animationRange!.end)}</div>
             {!template && <p role="status">このテンプレートは現在のバージョンでは再生できません。</p>}
             {template?.controls.map(control => {
-              const value = animation.params[control.key];
+              const value = animation.params[control.key] ?? control.initial;
               const change = (next: number | string) => updateLayer(layer.id, item => ({
                 ...item, animations: item.animations.map(clip => clip.id === animation.id
                   ? { ...clip, params: { ...clip.params, [control.key]: next } } : clip),

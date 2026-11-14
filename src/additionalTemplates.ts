@@ -20,6 +20,7 @@ const noise = (i: number) => {
 };
 const define = (category: number, id: string, label: string, controls: Control[], sample: Template['sample'], textOnly = false): Template =>
   ({ id, label, category: categories[category], controls, sample, textOnly,
+    activeOnly: category === 6 || id === 'hue-spin',
     icon: ['slideIn', 'slideOut', 'rotate', 'bounce', 'text', 'color', 'spark', 'shrink'][category],
     tone: ['violet', 'blue', 'mint', 'peach', 'violet', 'pink', 'blue', 'mint'][category] });
 
@@ -101,7 +102,11 @@ export const additionalTemplates: Template[] = [
   define(6, 'noise-flicker', 'ノイズ点滅', [amount, cycles], (p, a) => ({ opacity: 1 - (noise(stepped(p, 12 * Number(a.cycles))) + 1) * Number(a.amount) / 200 * envelope(p) })),
   define(6, 'blur-in', 'ブラー登場', [distance, amount], (p, a) => ({ blur: Math.abs(Number(a.distance)) / 5 * (1 - ease(p)), opacity: 1 - (1 - p) * Number(a.amount) / 100 })),
   define(6, 'glow', 'グロー', [distance, cycles], (p, a) => ({ glow: Math.abs(Number(a.distance)) / 4 * envelope(p) * (0.7 + 0.3 * wave(p, Number(a.cycles))) })),
-  define(6, 'trail', '残像', [distance, cycles], (p, a) => ({ trail: Number(a.distance) / 2 * wave(p, Number(a.cycles)) * envelope(p) })),
+  define(6, 'trail', '残像', [distance, cycles,
+    n('interval', '間隔 (秒)', 0.07, 0.02, 0.4, 0.01)], (_p, a) => ({
+    trail: { count: Math.max(1, Math.min(8, Number(a.cycles))),
+      interval: Number(a.interval ?? 0.07), opacity: Math.min(0.85, Math.abs(Number(a.distance)) / 400) },
+  })),
   define(7, 'stretch-x', '横伸縮', [amount, cycles], (p, a) => ({ scaleX: 1 + Number(a.amount) / 100 * wave(p, Number(a.cycles)) * envelope(p) })),
   define(7, 'stretch-y', '縦伸縮', [amount, cycles], (p, a) => ({ scaleY: 1 + Number(a.amount) / 100 * wave(p, Number(a.cycles)) * envelope(p) })),
   define(7, 'collapse', '潰れる', [amount], (p, a) => ({ scaleY: 1 - 0.95 * p ** 2, scaleX: 1 + Number(a.amount) / 100 * ease(p), opacity: 1 - p ** 4 })),

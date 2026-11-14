@@ -43,6 +43,9 @@ test('genre and object compatibility constrain the draw, with repeats only when 
   assert.equal(options.length, 20);
   assert.equal(new Set(options.slice(0, 5).map(item => item.template)).size, 5);
   assert.ok(options.every(item => item.start === 0 && registry.get(item.template).category === '色変化'));
+  const effects = [...registry.values()].filter(item => item.category === 'グリッチ・エフェクト');
+  const drawnEffects = randomAnimations(shape, 0, effects.length, 'グリッチ・エフェクト', () => 0);
+  assert.deepEqual(new Set(drawnEffects.map(item => item.template)), new Set(effects.map(item => item.id)));
   assert.deepEqual(randomAnimations(shape, 0, 3, '文字アニメーション'), []);
   assert.deepEqual(randomAnimations({ ...shape, end: 0.01 }, 0, 3, 'all'), []);
   assert.deepEqual(randomAnimations(shape, 0, 1.5, 'all'), []);
