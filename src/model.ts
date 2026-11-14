@@ -30,15 +30,15 @@ export type Span = { start: number; end: number };
 export type Edge = 'move' | 'start' | 'end';
 export type Reorder = { id: string; after: boolean };
 
-export function adjacentEndpoint(layers: Layer[], time: number, direction: -1 | 1): number | undefined {
+export function adjacentEndpoint(layers: Layer[], time: number, direction: -1 | 1, extra?: Span): number | undefined {
   let next: number | undefined;
-  for (const layer of layers) {
-    for (const span of [layer, ...layer.animations]) {
+  const spans: Span[] = layers.flatMap(layer => [layer, ...layer.animations]);
+  if (extra) spans.push(extra);
+  for (const span of spans) {
       for (const endpoint of [span.start, span.end]) {
         if (direction * (endpoint - time) > 1e-8 &&
             (next === undefined || direction * (endpoint - next) < 0)) next = endpoint;
       }
-    }
   }
   return next;
 }
@@ -69,8 +69,8 @@ export function editSpan(span: Span, edge: Edge, delta: number, bounds: Span): S
   return { start: seconds(start + shift), end: seconds(end + shift) };
 }
 
-export function editLayerSpan(layer: Layer, edge: Edge, delta: number): Layer {
-  const bounds = { start: 0, end: DURATION };
+export function editLayerSpan(layer: Layer, edge: Edge, delta: number, duration = DURATION): Layer {
+  const bounds = { start: 0, end: duration };
   const span = editSpan(layer, edge, delta, bounds);
   const start = edge === 'start'
     ? Math.min(span.start, ...layer.animations.map(animation => animation.start))

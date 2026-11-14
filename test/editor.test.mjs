@@ -2,12 +2,26 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { defaults, evaluate } from '../src/animation.ts';
 import { previewGeometry } from '../src/geometry.ts';
+import { editMusic, sourceTime } from '../src/music.ts';
 import { adjacentEndpoint, editLayerSpan, editSpan, newLayer, reorderById } from '../src/model.ts';
 import { registry, templates } from '../src/templates.ts';
 
 function clip(template, start, end) {
   return { id: template, template, start, end, params: defaults(registry.get(template)) };
 }
+
+test('music trim preserves source alignment and moving retains the trimmed audio', () => {
+  const music = { start: 0, end: 20, inPoint: 0, volume: 1, muted: false,
+    asset: { id: 'song', name: 'song.wav', duration: 20 } };
+  const trimmed = editMusic(editMusic(music, 'start', 3), 'end', -4);
+  assert.equal(sourceTime(trimmed, 5), 5);
+  const moved = editMusic(trimmed, 'move', 7);
+  assert.deepEqual([moved.start, moved.end, moved.inPoint], [10, 23, 3]);
+  assert.equal(sourceTime(moved, 10), 3);
+  assert.equal(sourceTime(moved, 12), 5);
+  assert.equal(adjacentEndpoint([], 0, 1, moved), 10);
+  assert.equal(adjacentEndpoint([], 10, 1, moved), 23);
+});
 
 test('preview movement changes the base position even while a slide offsets the object', () => {
   const layer = newLayer('rectangle', 1);

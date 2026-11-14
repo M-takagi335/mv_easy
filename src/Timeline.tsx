@@ -1,7 +1,8 @@
-import { useRef, useState } from 'react';
+import { useMemo, useRef, useState } from 'react';
 import type { CSSProperties, KeyboardEvent, PointerEvent, ReactNode } from 'react';
 import { Icon } from './Icon';
-import { DURATION, STEP, clamp } from './model';
+import { STEP, clamp } from './model';
+import type { MusicClip } from './music';
 import type { Edge, Layer, Reorder, Span } from './model';
 import { registry } from './templates';
 
@@ -11,6 +12,12 @@ type TimelineProps = {
   selection: Selection | null;
   expanded: Set<string>;
   time: number;
+  duration: number;
+  music: MusicClip | null;
+  peaks?: Float32Array;
+  musicSelected: boolean;
+  onSelectMusic: () => void;
+  onEditMusic: (edge: Edge, delta: number, original?: MusicClip) => void;
   playing: boolean;
   onReorder: (source: Selection, target: Reorder) => void;
   onToggle: (id: string) => void;
@@ -20,15 +27,23 @@ type TimelineProps = {
 };
 
 export function formatTime(time: number) {
-  return '00:' + time.toFixed(2).padStart(5, '0');
+  const centiseconds = Math.round(time * 100);
+  return String(Math.floor(centiseconds / 6000)).padStart(2, '0') + ':'
+    + ((centiseconds % 6000) / 100).toFixed(2).padStart(5, '0');
 }
 
-function barStyle(span: Span): CSSProperties {
-  return { left: `${100 * span.start / DURATION}%`, width: `${100 * (span.end - span.start) / DURATION}%` };
-}
-
-export function Timeline({ layers, selection, expanded, time, playing, onReorder, onToggle, onSelect, onSeek, onEdit }: TimelineProps) {
+export function Timeline({ layers, selection, expanded, time, duration, music, peaks, musicSelected, onSelectMusic, onEditMusic,
+  playing, onReorder, onToggle, onSelect, onSeek, onEdit }: TimelineProps) {
   const [drop, setDrop] = useState<Reorder | null>(null);
+  const [zoom, setZoom] = useState(1);
+  const waveform = useMemo(() => peaks && Array.from(peaks, (peak, i) => {
+    const amplitude = Math.max(0.008, peak);
+    return `M${i + 0.5} ${1 - amplitude}v${amplitude * 2}`;
+  }).join(''), [peaks]);
+
+  function barStyle(span: Span): CSSProperties {
+    return { left: `${100 * span.start / duration}%`, width: `${100 * (span.end - span.start) / duration}%` };
+  }
   const orderDrag = useRef<{ source: Selection; pointer: number; y: number; moved: boolean; target: Reorder | null } | null>(null);
   const suppressClick = useRef(false);
 
@@ -82,6 +97,10 @@ export function Timeline({ layers, selection, expanded, time, playing, onReorder
   const dropClass = (id: string) => !playing && drop?.id === id ? (drop.after ? 'drop-after' : 'drop-before') : '';
 
   function drag(event: PointerEvent<HTMLButtonElement>, target: Selection, edge: Edge, original: Layer) {
+    dragBar(event, delta => onEdit(target, edge, delta, original), () => onSelect(target));
+  }
+
+  function dragBar(event: PointerEvent<HTMLButtonElement>, update: (delta: number) => void, select: () => void) {
     if (event.button !== 0) return;
     event.stopPropagation();
     if (playing) return;
@@ -91,13 +110,13 @@ export function Timeline({ layers, selection, expanded, time, playing, onReorder
     handle.setPointerCapture(event.pointerId);
     function move(moveEvent: globalThis.PointerEvent) {
       if (moveEvent.pointerId === event.pointerId) {
-        onEdit(target, edge, (moveEvent.clientX - startX) * DURATION / width, original);
+        update((moveEvent.clientX - startX) * duration / width);
       }
     }
     const finish = () => handle.removeEventListener('pointermove', move);
     handle.addEventListener('pointermove', move);
     handle.addEventListener('lostpointercapture', finish, { once: true });
-    onSelect(target);
+    select();
   }
 
   function key(event: KeyboardEvent, target: Selection, edge: Edge) {
@@ -133,33 +152,64 @@ export function Timeline({ layers, selection, expanded, time, playing, onReorder
 
   function scrubPosition(event: PointerEvent<HTMLDivElement>) {
     const bounds = event.currentTarget.getBoundingClientRect();
-    onSeek(clamp((event.clientX - bounds.left) * DURATION / bounds.width, 0, DURATION));
+    onSeek(clamp((event.clientX - bounds.left) * duration / bounds.width, 0, duration));
   }
 
   return <section className="timeline" aria-label="タイムライン">
     <div className="timeline-head">
       <h2><Icon name="panel" size={17} /> タイムライン</h2>
-      <span className="shortcut">端点へ移動 <kbd>Alt</kbd> + <kbd>←</kbd> <kbd>→</kbd></span>
+      <div className="timeline-tools">
+        <span className="shortcut">端点へ移動 <kbd>Alt</kbd> + <kbd>←</kbd> <kbd>→</kbd></span>
+        <label>ズーム <input aria-label="タイムラインのズーム" type="range" min="1" max="8" step="1"
+          value={zoom} onChange={event => setZoom(event.target.valueAsNumber)} /></label>
+      </div>
     </div>
     <div className="tracks-scroll">
-      <div className="tracks-area">
+      <div className="tracks-area" style={{ width: `${zoom * 100}%` }}>
         <div className="ruler-row">
           <div className="layer-column">レイヤー <span>{layers.length}</span></div>
-          <div className="ruler" role="slider" tabIndex={0} aria-label="再生位置" aria-valuemin={0} aria-valuemax={DURATION}
+          <div className="ruler" role="slider" tabIndex={0} aria-label="再生位置" aria-valuemin={0} aria-valuemax={duration}
             aria-valuenow={Number(time.toFixed(2))} onPointerDown={scrub}
             onPointerMove={event => { if (event.currentTarget.hasPointerCapture(event.pointerId)) scrubPosition(event); }}
             onKeyDown={event => {
               if (event.altKey || event.shiftKey || event.ctrlKey || event.metaKey) return;
               if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return;
               event.preventDefault();
-              const positions = { ArrowLeft: time - STEP, ArrowRight: time + STEP, Home: 0, End: DURATION };
-              onSeek(clamp(positions[event.key as keyof typeof positions], 0, DURATION));
+              const positions = { ArrowLeft: time - STEP, ArrowRight: time + STEP, Home: 0, End: duration };
+              onSeek(clamp(positions[event.key as keyof typeof positions], 0, duration));
             }}>
             {Array.from({ length: 6 }, (_, index) => <span key={index} style={{ left: `${index * 20}%` }}>
-              00:{String(index * 3).padStart(2, '0')}
+              {formatTime(index * duration / 5).slice(0, -3)}
             </span>)}
           </div>
         </div>
+        {music && <div className={`track-row music-row ${musicSelected ? 'active-row' : ''}`}>
+          <div className="layer-label"><button type="button" className="layer-name" onClick={onSelectMusic}>♫ 音楽</button></div>
+          <div className="track" onPointerDown={scrub} onPointerMove={event => {
+            if (event.currentTarget.hasPointerCapture(event.pointerId)) scrubPosition(event);
+          }}>
+            <div className={`clip music-clip ${musicSelected ? 'selected-clip' : ''}`} style={barStyle(music)}>
+              {waveform && peaks && <svg className="waveform" aria-hidden="true" preserveAspectRatio="none"
+                viewBox={`${music.inPoint / music.asset.duration * peaks.length} 0 ${(music.end - music.start) / music.asset.duration * peaks.length} 2`}>
+                <path d={waveform} vectorEffect="non-scaling-stroke" />
+              </svg>}
+              <button type="button" className="clip-body" aria-pressed={musicSelected} title={music.asset.name}
+                onClick={onSelectMusic} onPointerDown={event => dragBar(event, delta => onEditMusic('move', delta, music), onSelectMusic)}>
+                {music.muted ? '消音 · ' : ''}{music.asset.name}{!peaks && '（再リンクが必要）'}
+              </button>
+              {(['start', 'end'] as const).map(edge => <button key={edge} type="button" className={`clip-edge ${edge}`}
+                aria-label={`音楽の${edge === 'start' ? '開始' : '終了'}端点`}
+                onPointerDown={event => dragBar(event, delta => onEditMusic(edge, delta, music), onSelectMusic)}
+                onKeyDown={event => {
+                  if (playing || !event.altKey || !event.shiftKey || event.ctrlKey || event.metaKey ||
+                      !['ArrowLeft', 'ArrowRight'].includes(event.key)) return;
+                  event.preventDefault();
+                  onSelectMusic();
+                  onEditMusic(edge, event.key === 'ArrowLeft' ? -STEP : STEP);
+                }} />)}
+            </div>
+          </div>
+        </div>}
         {layers.map(layer => {
           const open = expanded.has(layer.id);
           const active = selection?.layerId === layer.id;
@@ -206,7 +256,7 @@ export function Timeline({ layers, selection, expanded, time, playing, onReorder
           </div>;
         })}
         {!layers.length && <p className="empty-timeline">＋追加から最初のレイヤーを作成できます。</p>}
-        <div className="playhead-area" aria-hidden="true"><div className="playhead" style={{ left: `${100 * time / DURATION}%` }} /></div>
+        <div className="playhead-area" aria-hidden="true"><div className="playhead" style={{ left: `${100 * time / duration}%` }} /></div>
       </div>
     </div>
   </section>;

@@ -138,6 +138,18 @@ svg { flex-shrink: 0; vertical-align: middle; }
 .timeline-head { padding: 0 18px; display: flex; align-items: center; justify-content: space-between; gap: 12px; border-bottom: 1px solid var(--line); }
 .timeline-head h2 { display: flex; align-items: center; gap: 8px; }
 .timeline-head svg { color: var(--accent); }
+.timeline-tools { display: flex; align-items: center; gap: 12px; }
+.timeline-tools label { display: flex; align-items: center; gap: 5px; color: var(--muted); font-size: 11px; }
+.timeline-tools input { width: clamp(40px, 8vw, 90px); accent-color: var(--accent); }
+.music-row { height: 50px; background: #142529; }
+.music-clip { --tone: #99ebd5; --clip: #1d4243; overflow: hidden; }
+.music-clip .clip-body { z-index: 1; text-align: left; padding-bottom: 18px; text-shadow: 0 1px 4px #000; font-weight: 700; }
+.music-clip .clip-edge { z-index: 2; }
+.waveform { position: absolute; inset: 12px 0 2px; width: 100%; height: calc(100% - 14px); pointer-events: none; }
+.waveform path { fill: none; stroke: #70d7b9; stroke-width: 1; }
+.properties .music-mute { display: flex; align-items: center; }
+.properties .music-mute input { width: auto; }
+.music-relink { padding: 7px; font-size: 12px; }
 .shortcut { color: var(--muted); font-size: 11px; white-space: nowrap; }
 kbd { font: 10px Consolas, monospace; border: 1px solid #424157; border-radius: 4px; padding: 1px 4px; color: #ddd8ef; }
 .tracks-scroll { overflow: auto; }
