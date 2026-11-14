@@ -6,19 +6,25 @@ import { randomAnimations } from '../src/randomAnimation.ts';
 import { registry } from '../src/templates.ts';
 
 test('random batches keep their placement, IDs and parameters through history and saving', () => {
-  const first = { ...newLayer('text', 1), start: 2, end: 5, textTrackId: 'lyrics' };
+  const manual = [
+    { id: 'manual-fade', template: 'fade-in', start: 2, end: 3, params: { opacity: 23 } },
+    { id: 'manual-rotate', template: 'rotate', start: 2, end: 3, params: { angle: 72 } },
+  ];
+  const first = { ...newLayer('text', 1), start: 2, end: 5, textTrackId: 'lyrics', animations: manual };
   const sibling = { ...newLayer('text', 2), start: 5, textTrackId: 'lyrics' };
   const history = createHistory([first, sibling], Object.is);
   const add = count => history.update(([target, other]) => [
     { ...target, animations: [...target.animations, ...randomAnimations(target, 4, count, 'all', () => 0.5)] }, other,
   ]);
   const firstBatch = add(3);
-  const secondBatch = add(10);
+  assert.equal(firstBatch[0].animations.length, 5);
+  const secondBatch = add(5);
   const effects = secondBatch[0].animations;
-  assert.equal(effects.length, 13);
-  assert.equal(new Set(effects.map(item => item.template)).size, 13);
-  assert.equal(new Set(effects.map(item => item.id)).size, 13);
-  assert.equal(new Set(effects.map(item => item.params)).size, 13);
+  assert.equal(effects.length, 10);
+  assert.deepEqual(effects.slice(0, 2), manual);
+  assert.equal(new Set(effects.map(item => item.template)).size, 10);
+  assert.equal(new Set(effects.map(item => item.id)).size, 10);
+  assert.equal(new Set(effects.map(item => item.params)).size, 10);
   assert.ok(effects.every(item => item.start === 2 && item.end === 3));
   assert.equal(secondBatch[1], sibling);
   assert.equal(history.step(false), firstBatch);
@@ -26,8 +32,8 @@ test('random batches keep their placement, IDs and parameters through history an
   const [restored] = unpackLayers(JSON.parse(JSON.stringify(packLayers(secondBatch))));
   assert.deepEqual(restored.animations, effects);
   const [left, right] = splitLayer(restored, 4.5);
-  assert.equal(left.animations.length, 13);
-  assert.equal(right.animations.length, 13);
+  assert.equal(left.animations.length, 10);
+  assert.equal(right.animations.length, 10);
   assert.ok(right.animations.every(item => item.start === 0 && !left.animations.some(other => other.id === item.id)));
 });
 

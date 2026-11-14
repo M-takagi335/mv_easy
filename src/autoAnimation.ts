@@ -22,26 +22,23 @@ export function applyAutomaticAnimations(layers: Layer[], selectedId: string, de
   for (const layer of siblings) {
     const length = layer.end - layer.start;
     const limit = Math.min(counts[density], length < 0.65 ? 1 : length < 1.5 ? 2 : 3);
-    const window = Math.min(0.55, length * (limit === 1 ? 0.65 : 0.25));
+    const window = Math.min(length, 0.55, Math.max(FRAME_DURATION, length * (limit === 1 ? 0.65 : 0.25)));
     const slots: { role: keyof typeof pools; span: Span }[] = [
       { role: 'entrance', span: { start: 0, end: window } },
     ];
     if (limit === 3) slots.push({ role: 'motion', span: { start: length * 0.3, end: length * 0.7 } });
     if (limit >= 2) slots.push({ role: 'exit', span: { start: length - window, end: length } });
-    const existing = layer.animations.filter(item => item.start < length && item.end > 0);
+    const existing = new Set(layer.animations.map(item => item.template));
     const animations: Animation[] = [];
     for (const { role, span } of slots) {
-      if (existing.length + animations.length >= limit) break;
-      if (span.end - span.start < FRAME_DURATION || existing.some(item => item.start < span.end && item.end > span.start)) continue;
+      if (span.end - span.start < FRAME_DURATION - 1e-9) continue;
       const pool = pools[role];
-      for (let attempt = 0; attempt < pool.length; attempt++) {
-        const id = pool[cursors[role]++ % pool.length];
-        const template = registry.get(id);
-        if (!template || existing.some(item => item.template === id)) continue;
-        if (template.textOnly && (length < 1.5 || !layer.text.trim())) continue;
-        animations.push({ ...span, id: crypto.randomUUID(), template: id, params: defaults(template) });
-        break;
-      }
+      const candidates = pool.map((_, index) => registry.get(pool[(cursors[role] + index) % pool.length]))
+        .filter(template => template && (!template.textOnly || (length >= 1.5 && layer.text.trim())));
+      const template = candidates.find(item => item && !existing.has(item.id)) ?? candidates[0];
+      if (!template) continue;
+      cursors[role] = pool.findIndex(id => id === template.id) + 1;
+      animations.push({ ...span, id: crypto.randomUUID(), template: template.id, params: defaults(template) });
     }
     if (animations.length) {
       added += animations.length;

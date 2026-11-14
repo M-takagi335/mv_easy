@@ -26,7 +26,10 @@ test('automatic application respects length, ownership, existing effects and his
   }));
   assert.equal(new Set(all.map(item => item.id)).size, all.length);
   assert.equal(new Set(all.map(item => item.params)).size, all.length);
-  assert.equal(applyAutomaticAnimations(result.layers, middle.id, 'high').added, 0);
+  const repeated = applyAutomaticAnimations(result.layers, middle.id, 'high');
+  assert.equal(repeated.added, 7);
+  assert.equal(repeated.affected, 3);
+  assert.deepEqual(repeated.layers[2].animations.slice(0, existing.animations.length), existing.animations);
   history.update(() => result.layers);
   assert.equal(history.step(false), original);
   assert.equal(history.step(true), result.layers);
