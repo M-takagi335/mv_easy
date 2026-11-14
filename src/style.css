@@ -78,6 +78,15 @@ svg { flex-shrink: 0; vertical-align: middle; }
   background: #20212e; border: 1px solid #2f3041; border-radius: 7px; font-size: 11px;
 }
 .template-card:hover:not(:disabled) { background: #29283b; border-color: var(--tone); }
+.template-tile { position: relative; min-width: 0; }
+.template-tile .template-card { width: 100%; height: 100%; padding-top: 23px; overflow-wrap: anywhere; }
+.template-tools { position: absolute; top: 3px; inset-inline-end: 4px; display: flex; gap: 2px; }
+.template-tools button { width: 20px; height: 20px; line-height: 1; padding: 0; border-radius: 4px; }
+.template-tools button:hover { background: #38344f; }
+.template-tools button[aria-pressed="true"] { color: #f3cd73; }
+.template-sample { position: sticky; top: 0; z-index: 2; margin-bottom: 8px; background: var(--panel); font-size: 11px; }
+.template-sample > div:first-child { display: flex; align-items: center; justify-content: space-between; }
+.template-sample .template-sample-canvas { width: 100%; box-shadow: none; }
 .template-icon { display: grid; place-items: center; color: var(--tone); }
 .violet { --tone: #b69cff; --clip: #3c2e62; }
 .blue { --tone: #83baff; --clip: #253d63; }

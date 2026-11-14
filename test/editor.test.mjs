@@ -163,7 +163,7 @@ test('every built-in template produces finite values across its interval', () =>
     : value && typeof value === 'object' ? Object.values(value).every(finite) : true;
   const layer = newLayer('ellipse', 1);
   assert.equal(registry.size, templates.length);
-  assert.ok(registry.size >= 50);
+  assert.ok(registry.size >= 100);
   for (const template of templates) {
     layer.animations = [clip(template.id, 1, 3)];
     for (const time of [0, 1, 1.5, 3, 7]) {

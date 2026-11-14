@@ -10,7 +10,9 @@ export type Pose = {
   lines?: { spacing: number; opacity: number; color: string; offset: number; bands?: number[] }[];
   glyphs?: GlyphEffect[];
 };
-export type GlyphPose = { x?: number; y?: number; rotation?: number; scale?: number; opacity?: number };
+export type GlyphPose = { x?: number; y?: number; rotation?: number; scale?: number; opacity?: number;
+  scaleX?: number; scaleY?: number; replacement?: string; tint?: { target: string; weight: number };
+  glow?: { color: string; radius: number } };
 export type GlyphEffect = { unit: string; sample: (index: number, count: number) => GlyphPose };
 export type VisualFilter =
   | { kind: 'blur' | 'hue-rotate' | 'saturate' | 'brightness' | 'contrast' | 'grayscale' | 'invert'; value: number }

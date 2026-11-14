@@ -38,7 +38,11 @@ export function AnimatedText({ text, effects }: { text: string; effects: GlyphEf
     if (first.newline) return <br key={first.index} />;
     const value = run.map(item => item.segment).join('');
     if (!/\S/.test(value)) return value;
-    const pose: Required<GlyphPose> = { x: 0, y: 0, rotation: 0, scale: 1, opacity: 1 };
+    const pose: Required<Pick<GlyphPose, 'x' | 'y' | 'rotation' | 'scale' | 'opacity' | 'scaleX' | 'scaleY'>> =
+      { x: 0, y: 0, rotation: 0, scale: 1, opacity: 1, scaleX: 1, scaleY: 1 };
+    let replacement: string | undefined;
+    let color = 'currentColor';
+    const shadows: string[] = [];
     for (const effect of effects) {
       const count = segments.counts[effect.unit as keyof typeof segments.counts] ?? segments.counts.grapheme;
       const part = effect.sample(indexFor(first, effect.unit), count);
@@ -46,9 +50,23 @@ export function AnimatedText({ text, effects }: { text: string; effects: GlyphEf
       pose.y += part.y ?? 0;
       pose.rotation += part.rotation ?? 0;
       pose.scale *= part.scale ?? 1;
+      pose.scaleX *= part.scaleX ?? 1;
+      pose.scaleY *= part.scaleY ?? 1;
       pose.opacity *= part.opacity ?? 1;
+      replacement = part.replacement ?? replacement;
+      if (part.tint && part.tint.weight > 0) {
+        const weight = part.tint.weight * 100;
+        color = `color-mix(in srgb, ${color} ${100 - weight}%, ${part.tint.target} ${weight}%)`;
+      }
+      if (part.glow && part.glow.radius > 0) {
+        shadows.push(`0 0 ${part.glow.radius * 100 / CANVAS.width}cqw ${part.glow.color}`);
+      }
     }
-    return <span className="animated-glyph" key={first.index} style={{ opacity: pose.opacity,
-      transform: `translate(${pose.x * 100 / CANVAS.width}cqw, ${pose.y * 100 / CANVAS.width}cqw) rotate(${pose.rotation}deg) scale(${pose.scale})` }}>{value}</span>;
+    return <span className="animated-glyph" key={first.index} style={{ opacity: pose.opacity, color,
+      textShadow: shadows.length ? shadows.join(', ') : undefined,
+      transform: `translate(${pose.x * 100 / CANVAS.width}cqw, ${pose.y * 100 / CANVAS.width}cqw) rotate(${pose.rotation}deg) scale(${pose.scale * pose.scaleX}, ${pose.scale * pose.scaleY})` }}>
+      {replacement ? <><span style={{ visibility: 'hidden' }}>{value}</span><span aria-hidden="true"
+        style={{ position: 'absolute', inset: 0 }}>{replacement}</span></> : value}
+    </span>;
   })}</span>;
 }

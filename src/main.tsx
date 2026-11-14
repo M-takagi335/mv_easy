@@ -673,13 +673,13 @@ function App() {
   }
 
   const addAnimation = useCallback((id: string) => {
-    if (!layer || frame.current !== null) return;
+    if (!layer || !ready || frame.current !== null || timelineEditing.current || previewDrag.current) return false;
     const template = registry.get(id);
-    if (!template || (template.textOnly && layer.kind !== 'text')) return;
+    if (!template || (template.textOnly && layer.kind !== 'text')) return false;
     const span = initialAnimationSpan(layer, clock.current);
     if (!span) {
       setAnimationError('再生位置からクリップの終了までに、アニメーションを追加できる1フレーム分の余裕がありません。');
-      return;
+      return false;
     }
     setAnimationError('');
     const clip = { id: crypto.randomUUID(), template: id, ...span,
@@ -687,7 +687,8 @@ function App() {
     updateLayer(layer.id, item => ({ ...item, animations: [...item.animations, clip] }));
     openLayer(layer.id);
     setSelection({ layerId: layer.id, animationId: clip.id });
-  }, [layer, history]);
+    return true;
+  }, [layer, history, ready]);
 
   const addRandom = useCallback((count: number, genre: RandomGenre) => {
     if (!layer || !ready || frame.current !== null || timelineEditing.current || previewDrag.current) return;
@@ -863,7 +864,7 @@ function App() {
       </div>
     </header>
     <div className="workspace" inert={loadingProject}>
-      <TemplateLibrary kind={layer?.kind} playing={playing} onAdd={addAnimation} onAuto={autoAnimate}
+      <TemplateLibrary kind={layer?.kind} playing={playing} onAdd={addAnimation} onAuto={autoAnimate} fontProvider={fontProvider}
         targetName={layer ? (layer.kind === 'text' ? layer.text || layer.name : layer.name) : undefined}
         onRandom={addRandom} />
       <section className="monitor" aria-label="プレビュー">
