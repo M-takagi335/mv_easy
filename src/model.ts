@@ -1,11 +1,13 @@
 export const DURATION = 15;
 export const STEP = 0.1;
+export const FRAME_DURATION = 1 / 30;
 export const CANVAS = { width: 1920, height: 1080 };
 
 export type Parameters = Record<string, number | string>;
 export type Animation = {
   id: string;
   template: string;
+  // Both endpoints are offsets from the owning layer's start.
   start: number;
   end: number;
   params: Parameters;
@@ -66,13 +68,31 @@ export function unpackLayers(layers: ProjectLayer[]): Layer[] {
 export type Edge = 'move' | 'start' | 'end';
 export type Reorder = { id: string; after: boolean };
 
+export function animationTimelineSpan(owner: Span, animation: Span): Span {
+  return { start: owner.start + animation.start, end: owner.start + animation.end };
+}
+
+export function migrateAbsoluteAnimations(layer: Layer): Layer {
+  const ids = new Set<string>();
+  return { ...layer, animations: layer.animations.map(animation => {
+    const id = animation.id && !ids.has(animation.id) ? animation.id : crypto.randomUUID();
+    ids.add(id);
+    const start = Number.isFinite(animation.start) ? animation.start - layer.start : 0;
+    const end = Number.isFinite(animation.end) ? animation.end - layer.start : start;
+    if (end > start) return { ...animation, id, start, end };
+    const phase = animation.phase?.[1] ?? 1;
+    return { ...animation, id, start, end: start + FRAME_DURATION, phase: [phase, phase] };
+  }) };
+}
+
 export function adjacentEndpoint(layers: Layer[], time: number, direction: -1 | 1, extra?: Span | Span[]): number | undefined {
   let next: number | undefined;
-  const spans: Span[] = layers.flatMap(layer => [layer, ...layer.animations]);
+  const limit = Math.max(DURATION, ...layers.map(layer => layer.end), ...(Array.isArray(extra) ? extra.map(item => item.end) : [extra?.end ?? 0]));
+  const spans: Span[] = layers.flatMap(layer => [layer, ...layer.animations.map(animation => animationTimelineSpan(layer, animation))]);
   if (extra) spans.push(...(Array.isArray(extra) ? extra : [extra]));
   for (const span of spans) {
       for (const endpoint of [span.start, span.end]) {
-        if (direction * (endpoint - time) > 1e-8 &&
+        if (endpoint >= 0 && endpoint <= limit && direction * (endpoint - time) > 1e-8 &&
             (next === undefined || direction * (endpoint - next) < 0)) next = endpoint;
       }
   }
@@ -90,10 +110,22 @@ export function reorderById<T extends { id: string }>(items: T[], id: string, ta
 }
 export const clamp = (value: number, min: number, max: number) => Math.max(min, Math.min(max, value));
 const ticks = (time: number) => Math.round(time / STEP);
-export function editSpan(span: Span, edge: Edge, delta: number, bounds: Span): Span {
+export function initialAnimationSpan(owner: Span, playhead: number): Span | undefined {
+  const start = playhead >= owner.start && playhead < owner.end ? playhead : owner.start;
+  const end = Math.min(owner.end, start + 1.5);
+  if (end - start < FRAME_DURATION - 1e-9) return;
+  return { start: start - owner.start, end: end - owner.start };
+}
+
+export function editAnimationSpan(span: Span, edge: Edge, delta: number, owner: Span, duration: number): Span {
+  const bounds = { start: Math.min(-owner.start, span.start), end: Math.max(duration - owner.start, span.end) };
+  return editSpan(span, edge, delta, bounds, FRAME_DURATION);
+}
+
+export function editSpan(span: Span, edge: Edge, delta: number, bounds: Span, step = STEP): Span {
   const clean = (value: number) => Number(value.toFixed(9));
-  const change = ticks(delta) / 10;
-  const minimum = Math.min(STEP, span.end - span.start);
+  const change = Math.round(delta / step) * step;
+  const minimum = Math.min(step, span.end - span.start);
   if (!change) return { start: span.start, end: span.end };
   if (edge === 'start') return { start: clamp(clean(span.start + change), bounds.start, clean(span.end - minimum)), end: span.end };
   if (edge === 'end') return { start: span.start, end: clamp(clean(span.end + change), clean(span.start + minimum), bounds.end) };
@@ -108,46 +140,21 @@ export function editLayerSpan(layer: Layer, edge: Edge, delta: number, duration 
   const change = ticks(delta) / 10;
   const start = edge === 'start' ? clamp(Number((layer.start + change).toFixed(9)), earliest, layer.end - frame) : span.start;
   const end = edge === 'end' ? clamp(Number((layer.end + change).toFixed(9)), layer.start + frame, duration) : span.end;
-  const shift = start - layer.start;
-  return {
-    ...layer, start, end,
-    animations: layer.animations.map(animation => ({
-      ...animation, start: Number((animation.start + shift).toFixed(9)), end: Number((animation.end + shift).toFixed(9)),
-    })),
-  };
+  return { ...layer, start, end };
 }
 
 export function splitLayer(layer: Layer, time: number): [Layer, Layer] | undefined {
   if (!(time > layer.start && time < layer.end)) return;
-  if (layer.kind === 'text') {
-    const textTrackId = trackId(layer);
-    return [
-      { ...layer, textTrackId, end: time, endExclusive: true },
-      { ...layer, textTrackId, id: crypto.randomUUID(), start: time,
-        animations: layer.animations.map(animation => ({
-          ...animation, id: crypto.randomUUID(), params: { ...animation.params },
-          phase: animation.phase && [...animation.phase],
-        })) },
-    ];
-  }
-  const left: Animation[] = [];
-  const right: Animation[] = [];
-  for (const animation of layer.animations) {
-    const { start, end, phase = [0, 1] } = animation;
-    const copy = { ...animation, id: crypto.randomUUID(), params: { ...animation.params } };
-    if (end <= time) {
-      left.push(animation);
-      right.push({ ...copy, start: time, end: time, phase: [phase[1], phase[1]] });
-    } else if (start >= time) {
-      right.push(copy);
-    } else {
-      const middle = phase[0] + (phase[1] - phase[0]) * (time - start) / (end - start);
-      left.push({ ...animation, end: time, phase: [phase[0], middle] });
-      right.push({ ...copy, start: time, phase: [middle, phase[1]] });
-    }
-  }
-  return [{ ...layer, end: time, endExclusive: true, animations: left },
-    { ...layer, id: crypto.randomUUID(), start: time, animations: right }];
+  const textTrackId = layer.kind === 'text' ? trackId(layer) : undefined;
+  const offset = time - layer.start;
+  return [
+    { ...layer, textTrackId, end: time, endExclusive: true },
+    { ...layer, textTrackId, id: crypto.randomUUID(), start: time, animations: layer.animations.map(animation => ({
+      ...animation, id: crypto.randomUUID(), params: { ...animation.params },
+      start: animation.start - offset, end: animation.end - offset,
+      phase: animation.phase && [...animation.phase],
+    })) },
+  ];
 }
 
 export function newLayer(kind: Layer['kind'], number: number): Layer {

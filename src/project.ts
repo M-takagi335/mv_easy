@@ -1,7 +1,7 @@
 import type { ProjectLayer } from './model.ts';
 import type { MusicClip } from './music.ts';
 
-export type Project = { layers: ProjectLayer[]; music: MusicClip | null; musicClips?: MusicClip[] };
+export type Project = { layers: ProjectLayer[]; music: MusicClip | null; musicClips?: MusicClip[]; animationTime?: 'relative' };
 export type MusicAsset = { file: Blob; peaks: Float32Array };
 
 function openProject(): Promise<IDBDatabase> {

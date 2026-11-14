@@ -2,7 +2,7 @@ import { Fragment, useEffect, useMemo, useRef, useState } from 'react';
 import { flushSync } from 'react-dom';
 import type { CSSProperties, KeyboardEvent, PointerEvent, ReactNode } from 'react';
 import { Icon } from './Icon';
-import { STEP, clamp, groupLayers, trackId } from './model';
+import { STEP, animationTimelineSpan, clamp, groupLayers, trackId } from './model';
 import type { MusicClip } from './music';
 import type { Edge, Layer, Reorder, Span } from './model';
 import { registry } from './templates';
@@ -24,7 +24,8 @@ type TimelineProps = {
   onToggle: (id: string) => void;
   onSelect: (selection: Selection) => void;
   onSeek: (time: number) => void;
-  onEditCommit: (original: Layer) => void;
+  onEditStart: () => void;
+  onEditFinish: (cancel?: boolean) => void;
   onRename: (id: string, name: string) => void;
   onEdit: (selection: Selection, edge: Edge, delta: number, original?: Layer) => void;
 };
@@ -36,7 +37,7 @@ export function formatTime(time: number) {
 }
 
 export function Timeline({ layers, selection, expanded, time, duration, musicClips, peaks, selectedMusicId, onSelectMusic, onEditMusic,
-  playing, onReorder, onToggle, onSelect, onSeek, onEdit, onEditCommit, onRename }: TimelineProps) {
+  playing, onReorder, onToggle, onSelect, onSeek, onEdit, onEditStart, onEditFinish, onRename }: TimelineProps) {
   const [drop, setDrop] = useState<Reorder | null>(null);
   const groups = useMemo(() => groupLayers(layers), [layers]);
   const [renaming, setRenaming] = useState<{ id: string; name: string }>();
@@ -45,6 +46,16 @@ export function Timeline({ layers, selection, expanded, time, duration, musicCli
   const timelineRef = useRef<HTMLElement>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
   const rulerRef = useRef<HTMLDivElement>(null);
+  const previousAnimationIds = useRef<Set<string>>(new Set());
+
+  useEffect(() => {
+    const ids = new Set(layers.flatMap(layer => layer.animations.map(animation => animation.id)));
+    const selected = selection?.animationId;
+    if (selected && !previousAnimationIds.current.has(selected)) {
+      scrollRef.current?.querySelector('.animation-row .selected-clip')?.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+    }
+    previousAnimationIds.current = ids;
+  }, [layers, selection?.animationId]);
 
   useEffect(() => {
     const timeline = timelineRef.current!;
@@ -140,30 +151,44 @@ export function Timeline({ layers, selection, expanded, time, duration, musicCli
   const dropClass = (id: string) => !playing && drop?.id === id ? (drop.after ? 'drop-after' : 'drop-before') : '';
 
   function drag(event: PointerEvent<HTMLButtonElement>, target: Selection, edge: Edge, original: Layer) {
-    dragBar(event, delta => onEdit(target, edge, delta, original), () => onSelect(target),
-      !target.animationId ? () => onEditCommit(original) : undefined);
+    dragBar(event, delta => onEdit(target, edge, delta, original), () => onSelect(target));
   }
 
-  function dragBar(event: PointerEvent<HTMLButtonElement>, update: (delta: number) => void, select: () => void, commit?: () => void) {
+  function dragBar(event: PointerEvent<HTMLButtonElement>, update: (delta: number) => void, select: () => void) {
     if (event.button !== 0) return;
     event.stopPropagation();
     if (playing) return;
     const handle = event.currentTarget;
-    const width = handle.closest('.track')!.getBoundingClientRect().width;
-    const startX = event.clientX;
-    let delta = 0;
+    handle.focus({ preventScroll: true });
+    onEditStart();
+    const track = handle.closest('.track')!;
+    const initialBounds = track.getBoundingClientRect();
+    const start = (event.clientX - initialBounds.left) * duration / initialBounds.width;
     handle.setPointerCapture(event.pointerId);
     function move(moveEvent: globalThis.PointerEvent) {
       if (moveEvent.pointerId === event.pointerId) {
-        delta = (moveEvent.clientX - startX) * duration / width;
+        const bounds = track.getBoundingClientRect();
+        const delta = (moveEvent.clientX - bounds.left) * duration / bounds.width - start;
         update(delta);
       }
     }
+    let cancelled = false;
+    const cancel = () => { cancelled = true; };
+    function cancelOnEscape(event: globalThis.KeyboardEvent) {
+      if (event.key !== 'Escape' || !handle.hasPointerCapture(pointerId)) return;
+      cancelled = true;
+      handle.releasePointerCapture(pointerId);
+    }
+    const pointerId = event.pointerId;
     const finish = () => {
       handle.removeEventListener('pointermove', move);
-      if (Math.abs(delta) >= STEP / 2) commit?.();
+      handle.removeEventListener('pointercancel', cancel);
+      window.removeEventListener('keydown', cancelOnEscape);
+      onEditFinish(cancelled);
     };
     handle.addEventListener('pointermove', move);
+    handle.addEventListener('pointercancel', cancel);
+    window.addEventListener('keydown', cancelOnEscape);
     handle.addEventListener('lostpointercapture', finish, { once: true });
     select();
   }
@@ -300,23 +325,28 @@ export function Timeline({ layers, selection, expanded, time, duration, musicCli
               </div>
             </div>
             {open && layer.animations.map(animation => {
-              const visible = { start: Math.max(layer.start, animation.start), end: Math.min(layer.end, animation.end) };
-              if (visible.end < visible.start || (visible.end === visible.start && animation.end !== animation.start)) return null;
-              const template = registry.get(animation.template)!;
+              const timing = animationTimelineSpan(layer, animation);
+              const span = {
+                start: clamp(timing.start, 0, duration), end: clamp(timing.end, 0, duration),
+              };
+              const template = registry.get(animation.template);
+              const outside = timing.start < layer.start || timing.end > layer.end;
+              const label = template?.label ?? animation.template;
               const selected = active && selection?.animationId === animation.id;
               return <div key={animation.id} data-animation={animation.id}
                 className={`track-row animation-row ${selected ? 'active-row' : ''} ${dropClass(animation.id)}`}>
                 <div className="layer-label">
-                  <button type="button" className={`layer-name reorder-label ${template.tone}`} aria-pressed={selected}
+                  <button type="button" className={`layer-name reorder-label ${template?.tone ?? 'violet'}`} aria-pressed={selected}
                     title="上下ドラッグで合成順を変更" {...orderEvents({ layerId: layer.id, animationId: animation.id })}>
-                    <Icon name={template.icon} size={15} /> <span>{template.label}</span>
+                    <Icon name={template?.icon ?? 'spark'} size={15} /> <span>{label}{outside && '（範囲外を含む）'}{!template && '（未対応）'}</span>
                   </button>
                 </div>
                 <div className="track" onPointerDown={scrub} onPointerMove={event => {
                   if (event.currentTarget.hasPointerCapture(event.pointerId)) scrubPosition(event);
                 }}>
-                  {bar(layer, visible, { layerId: layer.id, animationId: animation.id }, template.label,
-                    template.tone, <>{template.label}</>, animation)}
+                  {bar(layer, span, { layerId: layer.id, animationId: animation.id }, label,
+                    `animation-clip ${template?.tone ?? 'violet'} ${outside ? 'outside-clip' : ''} ${span.start >= duration ? 'at-end' : ''}`,
+                    label, timing)}
                 </div>
               </div>;
             })}

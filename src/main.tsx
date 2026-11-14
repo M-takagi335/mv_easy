@@ -7,7 +7,7 @@ import { previewGeometry } from './geometry';
 import type { Corner, Geometry } from './geometry';
 import type { Pose } from './animation';
 import { Icon } from './Icon';
-import { adjacentEndpoint, CANVAS, DURATION, clamp, editLayerSpan, editSpan, groupLayers, newLayer, packLayers, reorderById, splitLayer, trackId, unpackLayers } from './model';
+import { adjacentEndpoint, animationTimelineSpan, CANVAS, DURATION, clamp, editAnimationSpan, editLayerSpan, groupLayers, initialAnimationSpan, migrateAbsoluteAnimations, newLayer, packLayers, reorderById, splitLayer, trackId, unpackLayers } from './model';
 import type { Edge, Layer, Reorder } from './model';
 import { formatTime, Timeline } from './Timeline';
 import type { Selection } from './Timeline';
@@ -19,6 +19,7 @@ import { editMusic, readMusic, sourceTime, splitMusic } from './music';
 import type { MusicClip } from './music';
 import { readProject, saveProject } from './project';
 import type { MusicAsset } from './project';
+import { createHistory } from './history';
 import './style.css';
 
 const kinds = [['text', 'テキスト'], ['rectangle', '四角形'], ['ellipse', '円・楕円']] as const;
@@ -62,21 +63,30 @@ function NumberField({ label, value, min, max, step = 1, onChange }: {
 function App() {
   const [fontProvider] = useState(createBrowserFontProvider);
   const [fonts, setFonts] = useState<FontOption[]>([]);
-  const [layers, setLayers] = useState(exampleLayers);
+  type EditData = { layers: Layer[]; musicClips: MusicClip[]; asset?: MusicAsset };
+  const [history] = useState(() => createHistory<EditData>({ layers: exampleLayers(), musicClips: [] },
+    (a, b) => a.asset === b.asset && JSON.stringify(a.layers) === JSON.stringify(b.layers) &&
+      JSON.stringify(a.musicClips) === JSON.stringify(b.musicClips)));
+  const [{ layers, musicClips, asset }, setEditData] = useState(history.current);
+  function setLayers(update: (items: Layer[]) => Layer[]) {
+    setEditData(history.update(data => ({ ...data, layers: update(data.layers) })));
+  }
+  function setMusicClips(update: MusicClip[] | ((items: MusicClip[]) => MusicClip[])) {
+    setEditData(history.update(data => ({ ...data, musicClips: typeof update === 'function' ? update(data.musicClips) : update })));
+  }
+  function finishEdit(cancel = false) { setEditData(history.finish(cancel)); }
   const [selection, setSelection] = useState<Selection | null>(() => ({ layerId: layers[0].id }));
   const [expanded, setExpanded] = useState(() => new Set([layers[0].id]));
   const [time, setTime] = useState(2.4);
-  const [musicClips, setMusicClips] = useState<MusicClip[]>([]);
   const [selectedMusicId, setSelectedMusicId] = useState<string>();
   const music = musicClips.find(clip => clip.id === selectedMusicId);
   const musicSelected = music !== undefined;
-  const undoHistory = useRef<(() => void)[]>([]);
   const copiedText = useRef<Layer | null>(null);
-  const [asset, setAsset] = useState<MusicAsset>();
   const [ready, setReady] = useState(false);
   const [loadingMusic, setLoadingMusic] = useState(false);
   const [audioError, setAudioError] = useState('');
   const [storageError, setStorageError] = useState('');
+  const [animationError, setAnimationError] = useState('');
   const media = useRef<HTMLAudioElement>(null);
   const picker = useRef<HTMLInputElement>(null);
   const relinking = useRef(false);
@@ -98,6 +108,7 @@ function App() {
   const nextLayer = useRef(5);
   const layer = musicSelected ? undefined : layers.find(item => item.id === selection?.layerId);
   const animation = layer?.animations.find(item => item.id === selection?.animationId);
+  const animationRange = layer && animation ? animationTimelineSpan(layer, animation) : undefined;
   const template = animation && registry.get(animation.template);
 
   useEffect(() => () => {
@@ -107,17 +118,17 @@ function App() {
   useEffect(() => {
     readProject().then(result => {
       if (result.project) {
-        const restoredLayers = unpackLayers(result.project.layers);
-        setLayers(restoredLayers);
+        const unpacked = unpackLayers(result.project.layers);
+        const restoredLayers = result.project.animationTime === 'relative' ? unpacked : unpacked.map(migrateAbsoluteAnimations);
         const clips = result.project.musicClips ?? (result.project.music ? [result.project.music] : []);
         const restored = clips.map(clip => ({ ...clip, id: clip.id ?? crypto.randomUUID() }));
-        setMusicClips(restored);
+        history.reset({ layers: restoredLayers, musicClips: restored, asset: result.asset });
+        setEditData(history.current);
         setSelection(restoredLayers[0] ? { layerId: restoredLayers[0].id } : null);
         if (!result.asset) setSelectedMusicId(restored[0]?.id);
-        setExpanded(new Set());
+        setExpanded(new Set(restoredLayers[0] ? [restoredLayers[0].id] : []));
         nextLayer.current = result.project.layers.length + 1;
       }
-      setAsset(result.asset);
       setReady(true);
     }).catch(() => {
       setStorageError('保存済みプロジェクトを開けませんでした。');
@@ -128,7 +139,7 @@ function App() {
   useEffect(() => {
     if (!ready) return;
     const timer = setTimeout(() => {
-      saveProject({ layers: packLayers(layers), music: musicClips[0] ?? null, musicClips }, asset).then(() => {
+      saveProject({ layers: packLayers(layers), music: musicClips[0] ?? null, musicClips, animationTime: 'relative' }, asset).then(() => {
         setStorageError('');
       }).catch(() => setStorageError('プロジェクトを保存できませんでした。ブラウザーの空き容量を確認してください。'));
     }, 350);
@@ -166,9 +177,7 @@ function App() {
         const offset = Math.min(clip.inPoint, Math.max(0, decoded.duration - 0.1));
         return { ...clip, asset: reference, inPoint: offset, end: clip.start + Math.min(clip.end - clip.start, decoded.duration - offset) };
       }) : [imported];
-      setMusicClips(clips);
-      undoHistory.current = [];
-      setAsset({ file, peaks: decoded.peaks });
+      setEditData(history.update(data => ({ ...data, musicClips: clips, asset: { file, peaks: decoded.peaks } })));
       setSelectedMusicId(id);
       const limit = Math.max(DURATION, ...clips.map(clip => clip.end), ...layers.map(item => item.end));
       if (clock.current > limit) seek(limit);
@@ -278,13 +287,19 @@ function App() {
           return;
         }
       }
+      const key = event.key.toLowerCase();
       if (!event.defaultPrevented && !event.isComposing && event.ctrlKey &&
-          !event.shiftKey && !event.altKey && !event.metaKey && event.key.toLowerCase() === 'z') {
+          !event.altKey && !event.metaKey && (key === 'z' || (key === 'y' && !event.shiftKey))) {
         if (frame.current !== null || previewDrag.current) return;
-        const undo = undoHistory.current.pop();
-        if (undo) {
-          event.preventDefault();
-          undo();
+        event.preventDefault();
+        const restored = history.step(key === 'y' || event.shiftKey);
+        setEditData(restored);
+        if (selection && !restored.layers.some(item => item.id === selection.layerId)) setSelection(null);
+        if (!restored.musicClips.some(item => item.id === selectedMusicId)) setSelectedMusicId(undefined);
+        const limit = Math.max(DURATION, ...restored.layers.map(item => item.end), ...restored.musicClips.map(item => item.end));
+        if (clock.current > limit) {
+          clock.current = limit;
+          setTime(limit);
         }
         return;
       }
@@ -302,7 +317,7 @@ function App() {
     }
     window.addEventListener('keydown', onSpace);
     return () => window.removeEventListener('keydown', onSpace);
-  }, [duration, musicClips, music, asset, ready, loadingMusic, layers, layer, selection]);
+  }, [duration, musicClips, music, asset, ready, loadingMusic, layers, layer, selection, selectedMusicId]);
 
   useEffect(() => {
     function onJump(event: KeyboardEvent) {
@@ -364,7 +379,6 @@ function App() {
       endExclusive: true, name: target.name, text: source?.text ?? 'テキストを入力',
       animations: source?.animations.map(animation => ({
         ...animation, id: crypto.randomUUID(), params: { ...animation.params },
-        start: start + (animation.start - source.start), end: start + (animation.end - source.start),
       })) ?? [],
     };
     setLayers(items => [...items, item]);
@@ -372,10 +386,6 @@ function App() {
     seek(start);
     setSelectedMusicId(undefined);
     setAddOpen(false);
-    undoHistory.current.push(() => {
-      setLayers(items => items.filter(entry => entry.id !== item.id));
-      setSelection({ layerId: target.id });
-    });
   }
 
   function updateLayer(id: string, update: (item: Layer) => Layer) {
@@ -385,6 +395,8 @@ function App() {
 
   function startPreviewDrag(event: PointerEvent<HTMLButtonElement>, item: Layer, pose: Pose, corner?: Corner) {
     if (event.button !== 0 || frame.current !== null || previewDrag.current) return;
+    event.currentTarget.focus({ preventScroll: true });
+    history.begin();
     const { x, y, width, height } = item;
     const base = { x, y, width, height };
     previewDrag.current = { id: item.id, pointer: event.pointerId, x: event.clientX, y: event.clientY,
@@ -405,22 +417,22 @@ function App() {
     updateLayer(drag.id, item => ({ ...item, ...next }));
   }
 
-  function finishPreviewDrag(pointer?: number) {
+  function finishPreviewDrag(pointer?: number, cancel = false) {
     const drag = previewDrag.current;
     if (!drag || (pointer !== undefined && pointer !== drag.pointer)) return;
     previewDrag.current = null;
-    if (drag.base.x !== drag.next.x || drag.base.y !== drag.next.y ||
-        drag.base.width !== drag.next.width || drag.base.height !== drag.next.height) {
-      undoHistory.current.push(() => setLayers(items => items.map(item =>
-        item.id === drag.id ? { ...item, ...drag.base } : item)));
-    }
+    finishEdit(cancel);
   }
 
   function addAnimation(id: string) {
     if (!layer || frame.current !== null) return;
-    const length = Math.min(1.5, layer.end - layer.start);
-    const start = clamp(Math.round(time * 10) / 10, layer.start, Math.round((layer.end - length) * 10) / 10);
-    const clip = { id: crypto.randomUUID(), template: id, start, end: Math.round((start + length) * 10) / 10,
+    const span = initialAnimationSpan(layer, clock.current);
+    if (!span) {
+      setAnimationError('再生位置からクリップの終了までに、アニメーションを追加できる1フレーム分の余裕がありません。');
+      return;
+    }
+    setAnimationError('');
+    const clip = { id: crypto.randomUUID(), template: id, ...span,
       params: defaults(registry.get(id)!) };
     updateLayer(layer.id, item => ({ ...item, animations: [...item.animations, clip] }));
     openLayer(layer.id);
@@ -433,19 +445,12 @@ function App() {
       if (!halves) return;
       setMusicClips(items => items.flatMap(item => item.id === music.id ? halves : [item]));
       setSelectedMusicId(halves[1].id);
-      undoHistory.current.push(() => {
-        setMusicClips(items => items.filter(item => item.id !== halves[1].id).map(item => item.id === music.id ? music : item));
-        setSelectedMusicId(music.id);
-      });
     } else if (layer) {
       const halves = splitLayer(layer, clock.current);
       if (!halves) return;
       setLayers(items => items.flatMap(item => item.id === layer.id ? halves : [item]));
       setSelection({ layerId: halves[1].id });
-      undoHistory.current.push(() => {
-        setLayers(items => items.filter(item => item.id !== halves[1].id).map(item => item.id === layer.id ? layer : item));
-        setSelection({ layerId: layer.id });
-      });
+      if (expanded.has(layer.id)) openLayer(halves[1].id);
     }
   }
 
@@ -461,9 +466,7 @@ function App() {
       return { ...item, animations: item.animations.map(clip => {
         if (clip.id !== target.animationId) return clip;
         const initial = source.animations.find(entry => entry.id === clip.id) ?? clip;
-        if (initial.start === initial.end) return clip;
-        const bounds = { start: Math.min(item.start, initial.start), end: Math.max(item.end, initial.end) };
-        return { ...clip, ...editSpan(initial, edge, delta, bounds) };
+        return { ...clip, ...editAnimationSpan(initial, edge, delta, item, duration) };
       }) };
     });
   }
@@ -544,6 +547,7 @@ function App() {
               const typography = item.kind === 'text' ? resolveTextFont(item, fontProvider) : undefined;
               const pointerHandlers = {
                 onPointerMove: movePreviewDrag,
+                onPointerCancel: (event: PointerEvent<HTMLButtonElement>) => finishPreviewDrag(event.pointerId, true),
                 onLostPointerCapture: (event: PointerEvent<HTMLButtonElement>) => finishPreviewDrag(event.pointerId),
               };
               return <div key={item.id} className="canvas-object"
@@ -585,11 +589,27 @@ function App() {
           <span className="aspect">16:9</span>
         </div>
       </section>
-      <aside className="inspector">
+      <aside className="inspector"
+        onFocus={event => {
+          if (event.target.matches('textarea, input[type="number"], input[type="color"], input[type="range"]')) history.begin();
+        }}
+        onBlur={event => {
+          if (event.target.matches('textarea, input[type="number"], input[type="color"], input[type="range"]')) finishEdit();
+        }}
+        onPointerDown={event => {
+          if (event.target instanceof HTMLInputElement && event.target.type === 'range') history.begin();
+        }}
+        onPointerUp={event => {
+          if (event.target instanceof HTMLInputElement && event.target.type === 'range') finishEdit();
+        }}
+        onPointerCancel={event => {
+          if (event.target instanceof HTMLInputElement && event.target.type === 'range') finishEdit(true);
+        }}>
         <div className="panel-title"><Icon name="panel" size={17} /><h2>プロパティ</h2></div>
         {loadingMusic && <p role="status">音声と波形を読み込んでいます…</p>}
         {audioError && <p role="alert">{audioError}</p>}
         {storageError && <p role="alert">{storageError}</p>}
+        {animationError && <p role="alert">{animationError}</p>}
         {musicSelected && music ? <>
           <div className="inspector-selection"><div><strong title={music.asset.name}>{music.asset.name}</strong><small>音楽</small></div>
             <button type="button" className="icon-button delete" aria-label="音楽を削除" disabled={playing || loadingMusic}
@@ -617,10 +637,11 @@ function App() {
             <div><strong>{template?.label ?? layer.name}</strong><small>{template ? layer.name : kinds.find(([kind]) => kind === layer.kind)?.[1]}</small></div>
             <button type="button" className="icon-button delete" aria-label={animation ? 'アニメーションを削除' : 'レイヤーを削除'}
               disabled={playing} onClick={removeSelection}><Icon name="trash" size={17} /></button></div>
-          {animation && template ? <fieldset className="properties" key={animation.id} disabled={playing}>
+          {animation ? <fieldset className="properties" key={animation.id} disabled={playing}>
             <h3>アニメーション設定</h3>
-            <div className="clip-range">{formatTime(animation.start)} — {formatTime(animation.end)}</div>
-            {template.controls.map(control => {
+            <div className="clip-range">{formatTime(animationRange!.start)} — {formatTime(animationRange!.end)}</div>
+            {!template && <p role="status">このテンプレートは現在のバージョンでは再生できません。</p>}
+            {template?.controls.map(control => {
               const value = animation.params[control.key];
               const change = (next: number | string) => updateLayer(layer.id, item => ({
                 ...item, animations: item.animations.map(clip => clip.id === animation.id
@@ -706,14 +727,12 @@ function App() {
       }}
       playing={playing} onReorder={reorder}
       onSelect={target => { setSelection(target); setSelectedMusicId(undefined); }} onSeek={seek} onEdit={edit}
-      onEditCommit={original => undoHistory.current.push(() => setLayers(items => items.map(item => item.id === original.id ? original : item)))}
+      onEditStart={() => history.begin()} onEditFinish={finishEdit}
       onRename={(id, name) => {
         if (frame.current !== null) return;
         const previous = layers.find(item => trackId(item) === id)?.name;
         if (previous === undefined || previous === name) return;
         setLayers(items => items.map(item => trackId(item) === id ? { ...item, name } : item));
-        undoHistory.current.push(() => setLayers(items => items.map(item =>
-          trackId(item) === id ? { ...item, name: previous } : item)));
       }}
       onToggle={id => setExpanded(current => {
         const next = new Set(current);

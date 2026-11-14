@@ -1,4 +1,4 @@
-import { clamp } from './model.ts';
+import { animationTimelineSpan, clamp } from './model.ts';
 import type { Layer, Parameters } from './model.ts';
 
 export type Pose = {
@@ -37,9 +37,10 @@ export function evaluate(layer: Layer, time: number, registry: ReadonlyMap<strin
   if (time < layer.start || time > layer.end || (layer.endExclusive && time === layer.end)) return { ...pose, opacity: 0 };
   for (const animation of layer.animations) {
     const template = registry.get(animation.template);
-    if (!template || time < animation.start) continue;
+    const { start, end } = animationTimelineSpan(layer, animation);
+    if (!template || time < start) continue;
     const [from, to] = animation.phase ?? [0, 1];
-    const fraction = animation.end === animation.start ? 1 : clamp((time - animation.start) / (animation.end - animation.start), 0, 1);
+    const fraction = end === start ? 1 : clamp((time - start) / (end - start), 0, 1);
     const progress = from + (to - from) * fraction;
     const effect = template.sample(progress, animation.params);
     pose.x += effect.x ?? 0;

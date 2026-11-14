@@ -2,13 +2,34 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { defaults, evaluate } from '../src/animation.ts';
 import { previewGeometry } from '../src/geometry.ts';
+import { createHistory } from '../src/history.ts';
 import { editMusic, sourceTime, splitMusic } from '../src/music.ts';
-import { adjacentEndpoint, editLayerSpan, editSpan, newLayer, packLayers, reorderById, splitLayer, unpackLayers } from '../src/model.ts';
+import { adjacentEndpoint, animationTimelineSpan, editAnimationSpan, editLayerSpan, editSpan, initialAnimationSpan,
+  migrateAbsoluteAnimations, newLayer, packLayers, reorderById, splitLayer, unpackLayers } from '../src/model.ts';
 import { registry, templates } from '../src/templates.ts';
 
 function clip(template, start, end) {
   return { id: template, template, start, end, params: defaults(registry.get(template)) };
 }
+
+test('history records one drag, skips cancelled and unchanged edits, and clears redo after a new edit', () => {
+  const history = createHistory({ start: 3, label: '歌詞' }, (a, b) => a.start === b.start && a.label === b.label);
+  history.begin();
+  for (const start of [4, 5, 8]) history.update(value => ({ ...value, start }));
+  history.finish();
+  history.update(value => ({ ...value, label: 'サビ' }));
+  assert.deepEqual(history.step(false), { start: 8, label: '歌詞' });
+  assert.deepEqual(history.step(false), { start: 3, label: '歌詞' });
+  history.begin();
+  history.update(value => ({ ...value, start: 10 }));
+  history.finish(true);
+  history.begin();
+  history.update(value => ({ ...value }));
+  history.finish();
+  assert.deepEqual(history.step(true), { start: 8, label: '歌詞' });
+  history.update(value => ({ ...value, label: '新しい歌詞' }));
+  assert.deepEqual(history.step(true), { start: 8, label: '新しい歌詞' });
+});
 
 test('music trim preserves source alignment and moving retains the trimmed audio', () => {
   const music = { start: 0, end: 20, inPoint: 0, volume: 1, muted: false,
@@ -95,7 +116,7 @@ test('animation endpoints snap and respect the layer bounds and minimum duration
 });
 
 test('trimming preserves animation settings and shifts them with the start', () => {
-  const layer = { ...newLayer('rectangle', 1), start: 2, end: 7, animations: [clip('fade-in', 3, 5)] };
+  const layer = { ...newLayer('rectangle', 1), start: 2, end: 7, animations: [clip('fade-in', 1, 3)] };
   const moved = editLayerSpan(layer, 'move', -10);
   assert.equal(moved.start, 0);
   assert.equal(moved.end, 5);
@@ -105,7 +126,8 @@ test('trimming preserves animation settings and shifts them with the start', () 
   assert.equal(trimmed.end, 4);
   assert.deepEqual(trimmed.animations, layer.animations);
   assert.equal(editLayerSpan(trimmed, 'end', 3).end, 7);
-  assert.equal(editLayerSpan(layer, 'start', 1).animations[0].start, 4);
+  const shifted = editLayerSpan(layer, 'start', 1);
+  assert.deepEqual(animationTimelineSpan(shifted, shifted.animations[0]), { start: 4, end: 6 });
   assert.ok(editLayerSpan(layer, 'start', 10).end - editLayerSpan(layer, 'start', 10).start >= 1 / 30 - 1e-9);
 });
 
@@ -118,8 +140,9 @@ test('a lyric cut shares a track, preserves animation progress and round-trips o
     assert.equal(left.fontFamily, right.fontFamily);
     for (const [index, animation] of original.animations.entries()) {
       assert.deepEqual(left.animations[index], animation);
-      assert.equal(right.animations[index].start, animation.start);
-      assert.equal(right.animations[index].end, animation.end);
+      const timing = animationTimelineSpan(right, right.animations[index]);
+      assert.ok(Math.abs(timing.start - animation.start) < 1e-8);
+      assert.ok(Math.abs(timing.end - animation.end) < 1e-8);
       assert.deepEqual(right.animations[index].params, animation.params);
       assert.notEqual(right.animations[index].params, left.animations[index].params);
     }
@@ -136,6 +159,34 @@ test('a lyric cut shares a track, preserves animation progress and round-trips o
   }
   assert.deepEqual(unpackLayers([original]), [original]);
   assert.equal(splitLayer(original, 0), undefined);
+});
+
+test('adding animations anchors the left edge at the playhead and trims only the end', () => {
+  const owner = { start: 0, end: 10 };
+  assert.deepEqual(initialAnimationSpan(owner, 0), { start: 0, end: 1.5 });
+  assert.deepEqual(initialAnimationSpan(owner, 5), { start: 5, end: 6.5 });
+  const lateOwner = { start: 4, end: 10 };
+  assert.deepEqual(initialAnimationSpan(lateOwner, 4.125), { start: 0.125, end: 1.625 });
+  assert.deepEqual(initialAnimationSpan(lateOwner, 9.875), { start: 5.875, end: 6 });
+  for (const time of [0, 10, 11]) assert.deepEqual(initialAnimationSpan(lateOwner, time), { start: 0, end: 1.5 });
+  assert.equal(initialAnimationSpan(lateOwner, 9.999), undefined);
+});
+
+test('legacy timings migrate, remain editable outside the owner and persist across a project round trip', () => {
+  const layer = migrateAbsoluteAnimations({ ...newLayer('text', 1), start: 5, end: 10,
+    animations: [clip('fade-in', 7, 8), clip('fade-in', 10, 10), clip('grow', 11, 13)] });
+  assert.equal(new Set(layer.animations.map(animation => animation.id)).size, 3);
+  assert.equal(layer.animations[0].start, 2);
+  assert.ok(layer.animations[1].end > layer.animations[1].start);
+  const recovered = editAnimationSpan(layer.animations[2], 'move', -4, layer, 15);
+  assert.deepEqual(animationTimelineSpan(layer, recovered), { start: 7, end: 9 });
+  assert.deepEqual(editAnimationSpan(recovered, 'start', -1, layer, 15), { start: 1, end: 4 });
+  assert.deepEqual(editAnimationSpan(recovered, 'end', 1, layer, 15), { start: 2, end: 5 });
+  layer.animations[2] = { ...layer.animations[2], ...recovered };
+  const [restored] = unpackLayers(JSON.parse(JSON.stringify(packLayers([layer]))));
+  assert.deepEqual(restored.animations, layer.animations);
+  assert.ok(evaluate(restored, 8, registry).scale > 1);
+  assert.equal(evaluate(restored, 11, registry).opacity, 0);
 });
 
 test('splitting trimmed music keeps the same source position on both sides', () => {

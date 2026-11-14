@@ -166,7 +166,7 @@ svg { flex-shrink: 0; vertical-align: middle; }
 .music-relink { padding: 7px; font-size: 12px; }
 .shortcut { color: var(--muted); font-size: 11px; white-space: nowrap; }
 kbd { font: 10px Consolas, monospace; border: 1px solid #424157; border-radius: 4px; padding: 1px 4px; color: #ddd8ef; }
-.tracks-scroll { overflow: auto; overscroll-behavior: contain; }
+.tracks-scroll { overflow: auto; overscroll-behavior: contain; scroll-padding: 29px 0 0 var(--label-width); }
 .tracks-area { position: relative; isolation: isolate; min-width: 560px; min-height: 100%; }
 .ruler-row, .track-row { display: grid; grid-template-columns: var(--label-width) minmax(0, 1fr); border-bottom: 1px solid #292a3b; }
 .ruler-row { height: 29px; position: sticky; top: 0; z-index: 5; background: #1d1e2b; }
@@ -215,6 +215,9 @@ kbd { font: 10px Consolas, monospace; border: 1px solid #424157; border-radius: 
 .selected-clip { border-color: var(--tone); box-shadow: 0 0 0 1px color-mix(in srgb, var(--tone) 30%, transparent); }
 .clip-body { width: 100%; padding: 0 8px; text-align: left; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 10px; cursor: grab; }
 .clip-body:active { cursor: grabbing; }
+.animation-clip { min-width: 14px; }
+.animation-clip.at-end { transform: translateX(-100%); }
+.animation-clip.outside-clip { border-style: dashed; }
 .clip-edge { position: absolute; z-index: 2; width: min(8px, 28%); top: 0; bottom: 0; padding: 0; cursor: ew-resize; border-radius: 3px; }
 .clip-edge:hover, .clip-edge:focus-visible { background: var(--tone); }
 .clip-edge.start { left: 0; }
