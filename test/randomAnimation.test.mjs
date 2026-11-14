@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { createHistory } from '../src/history.ts';
 import { newLayer, packLayers, splitLayer, unpackLayers } from '../src/model.ts';
-import { eligibleTemplates, randomAnimations } from '../src/randomAnimation.ts';
+import { drawTemplate, eligibleTemplates, randomAnimations, RANDOM_BATCH_LIMIT } from '../src/randomAnimation.ts';
 import { registry } from '../src/templates.ts';
 import { evaluate } from '../src/animation.ts';
 
@@ -10,7 +10,7 @@ test('all compatible IDs appear, with no adjacent repeats between shuffled batch
   for (const kind of ['text', 'rectangle', 'ellipse']) {
     const layer = newLayer(kind, 1);
     const candidates = eligibleTemplates(kind);
-    const result = randomAnimations(layer, 0, candidates.length + 1, 'all', () => 0);
+    const result = randomAnimations(layer, 0, Math.min(RANDOM_BATCH_LIMIT, candidates.length + 1), 'all', () => 0);
     assert.deepEqual(new Set(result.slice(0, candidates.length).map(item => item.template)),
       new Set(candidates.map(item => item.id)));
     assert.ok(result.every((item, i) => item.template !== result[i - 1]?.template));
@@ -20,6 +20,11 @@ test('all compatible IDs appear, with no adjacent repeats between shuffled batch
       assert.notDeepEqual(evaluate(animated, layer.start + 0.41, registry), evaluate(layer, layer.start + 0.41, registry));
     }
   }
+});
+
+test('a new draw cycle skips the previous template when alternatives exist', () => {
+  const candidates = eligibleTemplates('text');
+  assert.notEqual(drawTemplate([...candidates], () => 0, candidates[0].id).id, candidates[0].id);
 });
 
 test('first draws distribute across the complete catalog', () => {

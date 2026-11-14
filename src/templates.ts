@@ -2,6 +2,9 @@ import type { Control, Template } from './animation.ts';
 import { additionalTemplates } from './additionalTemplates.ts';
 import { visualEffects } from './visualEffects.ts';
 import { motionTemplates } from './motionTemplates.ts';
+import { transitionTemplates } from './transitionTemplates.ts';
+import { kineticTemplates } from './kineticTemplates.ts';
+import { typographyTemplates } from './typographyTemplates.ts';
 import { lyricTemplates } from './lyricTemplates.ts';
 import type { Parameters } from './model.ts';
 
@@ -49,5 +52,5 @@ const originalTemplates: Template[] = [
     sample: (p, params) => ({ color: { target: String(params.color), weight: p } }) },
 ];
 
-export const templates = [...originalTemplates, ...additionalTemplates, ...visualEffects, ...motionTemplates, ...lyricTemplates];
+export const templates = [...originalTemplates, ...additionalTemplates, ...visualEffects, ...motionTemplates, ...lyricTemplates, ...typographyTemplates, ...kineticTemplates, ...transitionTemplates];
 export const registry = new Map(templates.map(template => [template.id, template]));
