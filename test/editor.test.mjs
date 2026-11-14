@@ -131,34 +131,49 @@ test('trimming preserves animation settings and shifts them with the start', () 
   assert.ok(editLayerSpan(layer, 'start', 10).end - editLayerSpan(layer, 'start', 10).start >= 1 / 30 - 1e-9);
 });
 
-test('a lyric cut shares a track, preserves animation progress and round-trips older projects', () => {
-  const original = { ...newLayer('text', 1), fontFamily: 'Yu Mincho' };
-  original.animations = [clip('grow', 0, 1), clip('slide-in', 1, 4)];
-  for (const cut of [0.43, 2.37, 4.8]) {
-    const [left, right] = splitLayer(original, cut);
+test('split assigns animations to the intersecting side and preserves crossing progress', () => {
+  const original = { ...newLayer('text', 1), start: 2, end: 12, fontFamily: 'Yu Mincho',
+    animations: [clip('grow', 1, 3), clip('slide-in', 4, 7), clip('rotate', 4.5, 8)] };
+  const expected = [
+    [2.5, [], [[3, 5], [6, 9], [6.5, 10]]],
+    [7, [[3, 5], [6, 7], [6.5, 7]], [[7, 9], [7, 10]]],
+    [11, [[3, 5], [6, 9], [6.5, 10]], []],
+  ];
+  for (const [time, before, after] of expected) {
+    const [left, right] = splitLayer(original, time);
+    const spans = layer => layer.animations.map(animation => {
+      const { start, end } = animationTimelineSpan(layer, animation);
+      return [start, end];
+    });
+    assert.deepEqual(spans(left), before);
+    assert.deepEqual(spans(right), after);
     assert.equal(left.end, right.start);
-    assert.equal(left.fontFamily, right.fontFamily);
-    for (const [index, animation] of original.animations.entries()) {
-      assert.deepEqual(left.animations[index], animation);
-      const timing = animationTimelineSpan(right, right.animations[index]);
-      assert.ok(Math.abs(timing.start - animation.start) < 1e-8);
-      assert.ok(Math.abs(timing.end - animation.end) < 1e-8);
-      assert.deepEqual(right.animations[index].params, animation.params);
-      assert.notEqual(right.animations[index].params, left.animations[index].params);
-    }
-    assert.equal(evaluate(left, cut, registry).opacity, 0);
-    for (const time of [cut - 0.01, cut, cut + 0.01, 9]) {
-      const before = evaluate(original, time, registry);
-      const after = evaluate(time < cut ? left : right, time, registry);
-      assert.ok(Math.abs(before.x - after.x) < 1e-8);
-      assert.ok(Math.abs(before.scale - after.scale) < 1e-8);
-    }
-    const packed = packLayers([right, left]);
+    assert.notEqual(left.id, right.id);
+    assert.equal(right.fontFamily, original.fontFamily);
+    assert.equal(evaluate(left, time, registry).opacity, 0);
+    const packed = JSON.parse(JSON.stringify(packLayers([right, left])));
     assert.equal(packed.length, 1);
-    assert.deepEqual(unpackLayers(packed), [left, right]);
+    const restored = unpackLayers(packed);
+    assert.deepEqual(restored.map(spans), [before, after]);
+    const history = createHistory([original], (a, b) => a === b);
+    history.update(() => [left, right]);
+    assert.deepEqual(history.step(false), [original]);
+    assert.deepEqual(history.step(true).map(spans), [before, after]);
+    if (time === 7) {
+      for (const sample of [6.99, 7, 7.01, 8]) {
+        const previous = evaluate(original, sample, registry);
+        const next = evaluate(sample < time ? left : right, sample, registry);
+        assert.ok(Math.abs(previous.x - next.x) < 1e-8);
+        assert.ok(Math.abs(previous.rotation - next.rotation) < 1e-8);
+      }
+      assert.equal(evaluate(right, time, registry).scale, 1);
+      assert.notEqual(left.animations[1].id, right.animations[0].id);
+      assert.notEqual(left.animations[1].params, right.animations[0].params);
+      assert.notEqual(left.animations[1].phase, right.animations[0].phase);
+    }
   }
-  assert.deepEqual(unpackLayers([original]), [original]);
-  assert.equal(splitLayer(original, 0), undefined);
+  assert.equal(splitLayer(original, original.start), undefined);
+  assert.equal(splitLayer(original, original.end), undefined);
 });
 
 test('adding animations anchors the left edge at the playhead and trims only the end', () => {

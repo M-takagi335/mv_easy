@@ -165,8 +165,11 @@ export function Timeline({ layers, selection, expanded, time, duration, musicCli
     const initialBounds = track.getBoundingClientRect();
     const start = (event.clientX - initialBounds.left) * duration / initialBounds.width;
     handle.setPointerCapture(event.pointerId);
+    let dragged = false;
     function move(moveEvent: globalThis.PointerEvent) {
       if (moveEvent.pointerId === event.pointerId) {
+        if (!dragged && Math.abs(moveEvent.clientX - event.clientX) < 3) return;
+        dragged = true;
         const bounds = track.getBoundingClientRect();
         const delta = (moveEvent.clientX - bounds.left) * duration / bounds.width - start;
         update(delta);
@@ -203,12 +206,19 @@ export function Timeline({ layers, selection, expanded, time, duration, musicCli
     onEdit(target, edge, event.key === 'ArrowLeft' ? -STEP : STEP);
   }
 
-  function bar(layer: Layer, span: Span, target: Selection, caption: string, tone: string, content: ReactNode, timing = span) {
+  function bar(layer: Layer, span: Span, target: Selection, caption: string, tone: string, content: ReactNode, timing = span, open?: boolean) {
     const active = selection?.layerId === target.layerId && selection?.animationId === target.animationId;
+    const objectBar = target.animationId === undefined;
     return <div className={`clip ${tone} ${active ? 'selected-clip' : ''}`} style={barStyle(span)}
       title={`${formatTime(timing.start)} — ${formatTime(timing.end)}`}>
       <button type="button" className="clip-body" aria-label={caption} aria-pressed={active} title={caption}
+        aria-expanded={open}
         onPointerDown={event => drag(event, target, 'move', layer)}
+        onDoubleClick={objectBar ? () => {
+          if (playing) return;
+          onSelect(target);
+          onToggle(layer.id);
+        } : undefined}
         onClick={() => onSelect(target)}>
         {content}
       </button>
@@ -218,6 +228,7 @@ export function Timeline({ layers, selection, expanded, time, duration, musicCli
         onKeyDown={event => key(event, target, edge)} />)}
     </div>;
   }
+
 
   function scrub(event: PointerEvent<HTMLDivElement>) {
     if (event.button !== 0) return;
@@ -296,7 +307,7 @@ export function Timeline({ layers, selection, expanded, time, duration, musicCli
             <div className={`track-row ${active ? 'active-row' : ''}`}>
               <div className="layer-label">
                 <button type="button" className="icon-button disclosure" aria-label={`${layer.name}のアニメーション`}
-                  aria-expanded={open} onClick={() => onToggle(layer.id)}>
+                  aria-expanded={open} disabled={playing} onClick={() => onToggle(layer.id)}>
                   <Icon name={open ? 'down' : 'chevron'} size={13} />
                 </button>
                 {renaming?.id === id ? <input className="layer-rename" aria-label="レイヤー名" autoFocus
@@ -321,7 +332,8 @@ export function Timeline({ layers, selection, expanded, time, duration, musicCli
                 if (event.currentTarget.hasPointerCapture(event.pointerId)) scrubPosition(event);
               }}>
                 {group.map(clip => <Fragment key={clip.id}>{bar(clip, clip, { layerId: clip.id },
-                  clip.kind === 'text' ? clip.text || clip.name : clip.name, 'object-clip', clip.kind === 'text' ? clip.text || clip.name : clip.name)}</Fragment>)}
+                  clip.kind === 'text' ? clip.text || clip.name : clip.name, 'object-clip',
+                  clip.kind === 'text' ? clip.text || clip.name : clip.name, clip, clip.id === layer.id && open)}</Fragment>)}
               </div>
             </div>
             {open && layer.animations.map(animation => {

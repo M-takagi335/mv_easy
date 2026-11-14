@@ -147,13 +147,34 @@ export function splitLayer(layer: Layer, time: number): [Layer, Layer] | undefin
   if (!(time > layer.start && time < layer.end)) return;
   const textTrackId = layer.kind === 'text' ? trackId(layer) : undefined;
   const offset = time - layer.start;
+  const left: Animation[] = [];
+  const right: Animation[] = [];
+  for (const animation of layer.animations) {
+    if (animation.end <= offset) {
+      left.push(animation);
+      continue;
+    }
+    const [from, to] = animation.phase ?? [0, 1];
+    let rightStart = animation.start;
+    let rightPhase = animation.phase && [...animation.phase] as [number, number];
+    if (animation.start < offset) {
+      const progress = from + (to - from) * (offset - animation.start) / (animation.end - animation.start);
+      left.push({ ...animation, end: offset, phase: [from, progress] });
+      rightStart = offset;
+      rightPhase = [progress, to];
+    }
+    right.push({
+      ...animation,
+      id: crypto.randomUUID(),
+      params: { ...animation.params },
+      start: rightStart - offset,
+      end: animation.end - offset,
+      phase: rightPhase,
+    });
+  }
   return [
-    { ...layer, textTrackId, end: time, endExclusive: true },
-    { ...layer, textTrackId, id: crypto.randomUUID(), start: time, animations: layer.animations.map(animation => ({
-      ...animation, id: crypto.randomUUID(), params: { ...animation.params },
-      start: animation.start - offset, end: animation.end - offset,
-      phase: animation.phase && [...animation.phase],
-    })) },
+    { ...layer, textTrackId, end: time, endExclusive: true, animations: left },
+    { ...layer, textTrackId, id: crypto.randomUUID(), start: time, animations: right },
   ];
 }
 

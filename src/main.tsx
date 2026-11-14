@@ -294,7 +294,17 @@ function App() {
         event.preventDefault();
         const restored = history.step(key === 'y' || event.shiftKey);
         setEditData(restored);
-        if (selection && !restored.layers.some(item => item.id === selection.layerId)) setSelection(null);
+        if (selection) {
+          const restoredLayer = restored.layers.find(item => item.id === selection.layerId);
+          const splitSibling = layer && restoredLayer?.end !== layer.end
+            ? restored.layers.find(item => trackId(item) === trackId(layer) &&
+              item.start <= clock.current && clock.current < item.end)
+            : undefined;
+          const selected = splitSibling ?? restoredLayer;
+          const animationId = selected?.animations.find(item => item.id === selection.animationId)?.id;
+          setSelection(selected ? { layerId: selected.id, animationId } : null);
+          if (selected && expanded.has(selection.layerId)) openLayer(selected.id);
+        }
         if (!restored.musicClips.some(item => item.id === selectedMusicId)) setSelectedMusicId(undefined);
         const limit = Math.max(DURATION, ...restored.layers.map(item => item.end), ...restored.musicClips.map(item => item.end));
         if (clock.current > limit) {
@@ -317,7 +327,7 @@ function App() {
     }
     window.addEventListener('keydown', onSpace);
     return () => window.removeEventListener('keydown', onSpace);
-  }, [duration, musicClips, music, asset, ready, loadingMusic, layers, layer, selection, selectedMusicId]);
+  }, [duration, musicClips, music, asset, ready, loadingMusic, layers, layer, selection, selectedMusicId, expanded]);
 
   useEffect(() => {
     function onJump(event: KeyboardEvent) {
