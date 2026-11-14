@@ -1,8 +1,23 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { applyAutomaticAnimations } from '../src/autoAnimation.ts';
+import { applyAutomaticAnimations, automaticCandidates } from '../src/autoAnimation.ts';
+import { templates } from '../src/templates.ts';
 import { createHistory } from '../src/history.ts';
 import { editLayerSpan, newLayer, packLayers, splitLayer, unpackLayers } from '../src/model.ts';
+
+test('long lyric clips can draw every catalog ID without repeating a slot while alternatives remain', () => {
+  const layers = Array.from({ length: templates.length }, (_, index) => ({
+    ...newLayer('text', index), start: index * 3, end: (index + 1) * 3, textTrackId: 'lyrics',
+  }));
+  const { layers: result } = applyAutomaticAnimations(layers, layers[0].id, 'high', () => 0);
+  assert.deepEqual(new Set(result.flatMap(layer => layer.animations.map(item => item.template))),
+    new Set(templates.map(item => item.id)));
+  assert.ok(result.every((layer, index) =>
+    layer.animations.every((item, slot) => item.template !== result[index - 1]?.animations[slot].template)));
+  const short = { ...layers[0], end: 0.5 };
+  assert.ok(automaticCandidates(short).every(item => !item.textOnly));
+  assert.equal(applyAutomaticAnimations([short], short.id, 'high', () => 0).layers[0].animations.length, 1);
+});
 
 test('automatic application respects length, ownership, existing effects and history', () => {
   const short = { ...newLayer('text', 1), end: 0.45, textTrackId: 'lyrics' };

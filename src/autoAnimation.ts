@@ -1,45 +1,71 @@
 import { defaults } from './animation.ts';
 import { FRAME_DURATION, trackId } from './model.ts';
 import type { Animation, Layer, Span } from './model.ts';
-import { registry } from './templates.ts';
+import { drawTemplate, eligibleTemplates } from './randomAnimation.ts';
+import type { Template } from './animation.ts';
 
 export type AnimationDensity = 'low' | 'normal' | 'high';
+type Role = 'entrance' | 'motion' | 'exit';
 const counts = { low: 1, normal: 2, high: 3 };
-const pools = {
-  entrance: ['fade-in', 'slide-in', 'pop-in', 'spin-in', 'glyph-fade-in', 'depth-entry', 'glyph-cross-entry'],
-  motion: ['float', 'pulse', 'glyph-wave', 'tremble', 'glow', 'pulse-glow', 'neon-glow', 'color-trail', 'saturation',
-    'figure-eight', 'offbeat-zoom', 'glyph-color-wave', 'glyph-glow-wave'],
-  exit: ['fade-out', 'slide-out', 'pop-out', 'spin-out', 'glyph-fade-out', 'hinge-exit', 'glyph-crumble-exit'],
-} as const;
+const exits = new Set(['fade-out', 'slide-out', 'pop-out', 'bounce-out', 'spin-out', 'hinge-exit',
+  'glyph-crumble-exit', 'glyph-fade-out', 'glyph-scatter', 'collapse']);
 
-export function applyAutomaticAnimations(layers: Layer[], selectedId: string, density: AnimationDensity) {
+function roleOf(template: Template): Role {
+  if (exits.has(template.id)) return 'exit';
+  if (template.category === '登場・退場') return 'entrance';
+  return 'motion';
+}
+
+const catalog = eligibleTemplates('text');
+
+export function automaticCandidates(layer: Layer, role?: Role) {
+  const canAnimateGlyphs = layer.end - layer.start >= 1.5 && layer.text.trim() !== '';
+  return catalog.filter(template => (!role || roleOf(template) === role) && (!template.textOnly || canAnimateGlyphs));
+}
+
+export function applyAutomaticAnimations(layers: Layer[], selectedId: string, density: AnimationDensity, random = Math.random) {
   const selected = layers.find(layer => layer.id === selectedId && layer.kind === 'text');
   if (!selected) return { layers, added: 0, affected: 0 };
   const siblings = layers.filter(layer => layer.kind === 'text' && trackId(layer) === trackId(selected))
     .sort((a, b) => a.start - b.start);
   const changed = new Map<string, Layer>();
-  const cursors = { entrance: 0, motion: 0, exit: 0 };
+  const previous: Partial<Record<Role, string>> = {};
+  const used = new Set<string>();
   let added = 0;
   for (const layer of siblings) {
     const length = layer.end - layer.start;
     const limit = Math.min(counts[density], length < 0.65 ? 1 : length < 1.5 ? 2 : 3);
     const window = Math.min(length, 0.55, Math.max(FRAME_DURATION, length * (limit === 1 ? 0.65 : 0.25)));
-    const slots: { role: keyof typeof pools; span: Span }[] = [
-      { role: 'entrance', span: { start: 0, end: window } },
-    ];
-    if (limit === 3) slots.push({ role: 'motion', span: { start: length * 0.3, end: length * 0.7 } });
-    if (limit >= 2) slots.push({ role: 'exit', span: { start: length - window, end: length } });
+    const spans: Record<Role, Span> = {
+      entrance: { start: 0, end: window },
+      motion: { start: length * 0.3, end: length * 0.7 },
+      exit: { start: length - window, end: length },
+    };
+    const roles: (Role | undefined)[] = length < 1.5
+      ? (limit === 1 ? ['entrance'] : ['entrance', 'exit'])
+      : limit === 1 ? [undefined]
+      : limit === 2 ? (random() < 0.5 ? ['entrance', 'motion'] : ['motion', 'exit'])
+      : ['entrance', 'motion', 'exit'];
     const existing = new Set(layer.animations.map(item => item.template));
     const animations: Animation[] = [];
-    for (const { role, span } of slots) {
-      if (span.end - span.start < FRAME_DURATION - 1e-9) continue;
-      const pool = pools[role];
-      const candidates = pool.map((_, index) => registry.get(pool[(cursors[role] + index) % pool.length]))
-        .filter(template => template && (!template.textOnly || (length >= 1.5 && layer.text.trim())));
-      const template = candidates.find(item => item && !existing.has(item.id)) ?? candidates[0];
-      if (!template) continue;
-      cursors[role] = pool.findIndex(id => id === template.id) + 1;
-      animations.push({ ...span, id: crypto.randomUUID(), template: template.id, params: defaults(template) });
+    for (const role of roles) {
+      const candidates = automaticCandidates(layer, role).filter(item => {
+        const span = spans[roleOf(item)];
+        return span.end - span.start >= FRAME_DURATION - 1e-9;
+      });
+      const alternatives = candidates.filter(item => item.id !== previous[roleOf(item)]);
+      const available = alternatives.length ? alternatives : candidates;
+      const fresh = available.filter(item => !existing.has(item.id));
+      const pool = fresh.length ? fresh : available;
+      const unused = pool.filter(item => !used.has(item.id));
+      const draw = unused.length ? unused : pool;
+      if (!draw.length) continue;
+      const template = drawTemplate(draw, random);
+      const chosenRole = roleOf(template);
+      previous[chosenRole] = template.id;
+      used.add(template.id);
+      existing.add(template.id);
+      animations.push({ ...spans[chosenRole], id: crypto.randomUUID(), template: template.id, params: defaults(template) });
     }
     if (animations.length) {
       added += animations.length;
