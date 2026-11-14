@@ -2,11 +2,17 @@ import { clamp, STEP } from './model.ts';
 import type { Edge, Span } from './model.ts';
 
 export type MusicClip = Span & {
+  id?: string;
   asset: { id: string; name: string; duration: number };
   inPoint: number;
   volume: number;
   muted: boolean;
 };
+
+export function splitMusic(clip: MusicClip, time: number): [MusicClip, MusicClip] | undefined {
+  if (!(time > clip.start && time < clip.end)) return;
+  return [{ ...clip, end: time }, { ...clip, id: crypto.randomUUID(), start: time, inPoint: sourceTime(clip, time) }];
+}
 
 export function sourceTime(clip: MusicClip, time: number) {
   return clamp(clip.inPoint + time - clip.start, 0, clip.asset.duration);

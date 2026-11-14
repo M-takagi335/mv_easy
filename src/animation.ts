@@ -34,11 +34,13 @@ function mixColor(from: string, to: string, progress: number): string {
 
 export function evaluate(layer: Layer, time: number, registry: ReadonlyMap<string, Template>): Pose {
   let pose = { x: layer.x, y: layer.y, scale: 1, rotation: layer.rotation, opacity: 1, color: layer.color };
-  if (time < layer.start || time > layer.end) return { ...pose, opacity: 0 };
+  if (time < layer.start || time > layer.end || (layer.endExclusive && time === layer.end)) return { ...pose, opacity: 0 };
   for (const animation of layer.animations) {
     const template = registry.get(animation.template);
     if (!template || time < animation.start) continue;
-    const progress = clamp((time - animation.start) / (animation.end - animation.start), 0, 1);
+    const [from, to] = animation.phase ?? [0, 1];
+    const fraction = animation.end === animation.start ? 1 : clamp((time - animation.start) / (animation.end - animation.start), 0, 1);
+    const progress = from + (to - from) * fraction;
     const effect = template.sample(progress, animation.params);
     pose.x += effect.x ?? 0;
     pose.y += effect.y ?? 0;

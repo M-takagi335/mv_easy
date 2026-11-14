@@ -89,6 +89,7 @@ svg { flex-shrink: 0; vertical-align: middle; }
   cursor: move; pointer-events: auto; user-select: none; touch-action: none;
 }
 .canvas-content.ellipse { border-radius: 50%; }
+.canvas-content.text { font-synthesis: weight style; }
 .canvas-content:disabled { opacity: 1; pointer-events: none; }
 .canvas-selected { outline: 1px solid #d4bcff; }
 .preview-handle {
@@ -124,6 +125,19 @@ svg { flex-shrink: 0; vertical-align: middle; }
   border: 1px solid #323345; border-radius: 5px; padding: 4px 7px; font-size: 12px;
 }
 .properties textarea { resize: vertical; }
+.font-field { display: grid; gap: 4px; color: var(--muted); font-size: 11px; }
+.font-field summary {
+  padding: 6px 8px; border: 1px solid #323345; border-radius: 5px;
+  background: #11121c; color: #eeedf7; cursor: pointer; overflow-wrap: anywhere;
+}
+.font-options { display: grid; gap: 5px; padding: 5px; border: 1px solid var(--line); border-radius: 5px; }
+.font-results { display: grid; max-height: 125px; overflow-y: auto; }
+.font-results button, .font-load { padding: 4px 6px; text-align: left; overflow-wrap: anywhere; }
+.font-results button:hover, .font-load:hover { background: #302b43; }
+.font-field small { font-size: 11px; color: #f0cd9d; overflow-wrap: anywhere; }
+.font-toggles { display: flex; gap: 12px; }
+.properties .font-toggles label { display: flex; align-items: center; }
+.properties .font-toggles input { width: auto; min-height: 0; }
 .properties input[type="color"] { width: 35px; padding: 3px; cursor: pointer; }
 .color-field { display: flex; align-items: center; gap: 7px; font-family: Consolas, monospace; }
 .clip-range { color: #c1aaff; font: 12px Consolas, monospace; }
@@ -152,7 +166,7 @@ svg { flex-shrink: 0; vertical-align: middle; }
 .music-relink { padding: 7px; font-size: 12px; }
 .shortcut { color: var(--muted); font-size: 11px; white-space: nowrap; }
 kbd { font: 10px Consolas, monospace; border: 1px solid #424157; border-radius: 4px; padding: 1px 4px; color: #ddd8ef; }
-.tracks-scroll { overflow: auto; }
+.tracks-scroll { overflow: auto; overscroll-behavior: contain; }
 .tracks-area { position: relative; min-width: 560px; min-height: 100%; }
 .ruler-row, .track-row { display: grid; grid-template-columns: var(--label-width) minmax(0, 1fr); border-bottom: 1px solid #292a3b; }
 .ruler-row { height: 29px; position: sticky; top: 0; z-index: 2; background: #1d1e2b; }
@@ -179,6 +193,7 @@ kbd { font: 10px Consolas, monospace; border: 1px solid #424157; border-radius: 
 .drop-after::after { bottom: 0; }
 .layer-name svg { color: var(--tone, #aa96e3); }
 .layer-name span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.layer-rename { min-width: 0; width: 100%; padding: 3px 5px; border: 1px solid var(--accent); border-radius: 4px; background: #11121c; color: #eeedf7; font-size: 11px; }
 .track { background: repeating-linear-gradient(to right, #2a2a3b 0 1px, transparent 1px 20%); }
 .animation-row { height: 28px; background: #14151f; }
 .animation-row .layer-label, .empty-track { padding-left: 36px; }
@@ -192,7 +207,7 @@ kbd { font: 10px Consolas, monospace; border: 1px solid #424157; border-radius: 
 .selected-clip { border-color: var(--tone); box-shadow: 0 0 0 1px color-mix(in srgb, var(--tone) 30%, transparent); }
 .clip-body { width: 100%; padding: 0 8px; text-align: left; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 10px; cursor: grab; }
 .clip-body:active { cursor: grabbing; }
-.clip-edge { position: absolute; width: min(8px, 28%); top: 0; bottom: 0; padding: 0; cursor: ew-resize; border-radius: 3px; }
+.clip-edge { position: absolute; z-index: 2; width: min(8px, 28%); top: 0; bottom: 0; padding: 0; cursor: ew-resize; border-radius: 3px; }
 .clip-edge:hover, .clip-edge:focus-visible { background: var(--tone); }
 .clip-edge.start { left: 0; }
 .clip-edge.end { right: 0; }

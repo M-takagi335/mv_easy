@@ -2,8 +2,8 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { defaults, evaluate } from '../src/animation.ts';
 import { previewGeometry } from '../src/geometry.ts';
-import { editMusic, sourceTime } from '../src/music.ts';
-import { adjacentEndpoint, editLayerSpan, editSpan, newLayer, reorderById } from '../src/model.ts';
+import { editMusic, sourceTime, splitMusic } from '../src/music.ts';
+import { adjacentEndpoint, editLayerSpan, editSpan, newLayer, packLayers, reorderById, splitLayer, unpackLayers } from '../src/model.ts';
 import { registry, templates } from '../src/templates.ts';
 
 function clip(template, start, end) {
@@ -94,13 +94,47 @@ test('animation endpoints snap and respect the layer bounds and minimum duration
   assert.deepEqual(editSpan(span, 'end', 0.1, bounds), { start: 2.2, end: 4.5 });
 });
 
-test('moving a layer shifts its animations and trimming preserves their bounds', () => {
+test('trimming preserves animation settings and shifts them with the start', () => {
   const layer = { ...newLayer('rectangle', 1), start: 2, end: 7, animations: [clip('fade-in', 3, 5)] };
   const moved = editLayerSpan(layer, 'move', -10);
   assert.equal(moved.start, 0);
   assert.equal(moved.end, 5);
   assert.equal(moved.animations[0].start, 1);
   assert.equal(moved.animations[0].end, 3);
-  assert.equal(editLayerSpan(layer, 'start', 10).start, 3);
-  assert.equal(editLayerSpan(layer, 'end', -10).end, 5);
+  const trimmed = editLayerSpan(layer, 'end', -3);
+  assert.equal(trimmed.end, 4);
+  assert.deepEqual(trimmed.animations, layer.animations);
+  assert.equal(editLayerSpan(trimmed, 'end', 3).end, 7);
+  assert.equal(editLayerSpan(layer, 'start', 1).animations[0].start, 4);
+  assert.ok(editLayerSpan(layer, 'start', 10).end - editLayerSpan(layer, 'start', 10).start >= 1 / 30 - 1e-9);
+});
+
+test('a lyric cut shares a track, preserves animation progress and round-trips older projects', () => {
+  const original = { ...newLayer('text', 1), fontFamily: 'Yu Mincho' };
+  original.animations = [clip('grow', 0, 1), clip('slide-in', 1, 4)];
+  for (const cut of [0.43, 2.37, 4.8]) {
+    const [left, right] = splitLayer(original, cut);
+    assert.equal(left.end, right.start);
+    assert.equal(left.fontFamily, right.fontFamily);
+    assert.equal(evaluate(left, cut, registry).opacity, 0);
+    for (const time of [cut - 0.01, cut, cut + 0.01, 9]) {
+      const before = evaluate(original, time, registry);
+      const after = evaluate(time < cut ? left : right, time, registry);
+      assert.ok(Math.abs(before.x - after.x) < 1e-8);
+      assert.ok(Math.abs(before.scale - after.scale) < 1e-8);
+    }
+    const packed = packLayers([right, left]);
+    assert.equal(packed.length, 1);
+    assert.deepEqual(unpackLayers(packed), [left, right]);
+  }
+  assert.deepEqual(unpackLayers([original]), [original]);
+  assert.equal(splitLayer(original, 0), undefined);
+});
+
+test('splitting trimmed music keeps the same source position on both sides', () => {
+  const audio = { start: 2, end: 10, inPoint: 3, muted: false, volume: 1,
+    asset: { id: 'test', name: 'test.wav', duration: 20 } };
+  const [left, right] = splitMusic(audio, 5.25);
+  assert.equal(sourceTime(left, 5.25), sourceTime(right, 5.25));
+  assert.equal(sourceTime(right, 9), sourceTime(audio, 9));
 });
