@@ -99,7 +99,7 @@ svg { flex-shrink: 0; vertical-align: middle; }
 .canvas-object { position: absolute; pointer-events: none; }
 .canvas-content {
   width: 100%; height: 100%; display: grid; place-items: center; overflow: hidden; padding: 0;
-  line-height: 1.12; border-radius: 0; white-space: pre-wrap; overflow-wrap: anywhere; font-weight: 760;
+  line-height: 1.12; border-radius: 0; white-space: pre-wrap; overflow-wrap: anywhere; font-weight: 760; text-align: center;
   cursor: move; pointer-events: auto; user-select: none; touch-action: none;
 }
 .canvas-content.ellipse { border-radius: 50%; }
@@ -258,3 +258,19 @@ kbd { font: 10px Consolas, monospace; border: 1px solid #424157; border-radius: 
   .project-name, .header-divider, .timecode svg { display: none; }
   .shortcut { font-size: 9px; }
 }
+.project-name { width: clamp(90px, 12vw, 185px); color: inherit; border: 1px solid transparent; border-radius: 5px; background: transparent; padding: 5px; }
+.project-name:hover, .project-name:focus { border-color: var(--line); }
+.project-actions { display: flex; gap: 4px; align-items: center; position: relative; font-size: 12px; }
+.project-actions > button { border-radius: 5px; padding: 6px; white-space: nowrap; }
+.project-actions > button:hover { background: var(--surface); }
+.project-actions > label { display: flex; align-items: center; gap: 4px; white-space: nowrap; }
+.project-actions input[type="color"] { width: 26px; height: 24px; padding: 2px; }
+.project-save-menu { right: auto; left: 0; min-width: 220px; }
+.export-dialog { width: min(390px, 95vw); border: 1px solid var(--line); border-radius: 12px; color: inherit; background: var(--panel); padding: 20px; }
+.export-dialog::backdrop { background: #0008; }
+.export-dialog h2, .export-dialog p { margin-bottom: 10px; }
+.export-dialog fieldset { display: grid; gap: 10px; border: 0; padding: 0; margin: 14px 0; }
+.export-dialog label, .export-actions { display: flex; justify-content: space-between; align-items: center; }
+.export-dialog select, .export-actions button { padding: 6px 12px; border-radius: 5px; }
+.export-dialog progress { width: 100%; accent-color: var(--accent); }
+.export-dialog [role="alert"] { color: #ffaaa8; }

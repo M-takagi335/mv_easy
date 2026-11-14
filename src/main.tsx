@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { CSSProperties, FormEvent, PointerEvent } from 'react';
 import { createRoot } from 'react-dom/client';
-import { defaults, evaluate, sampleTrails } from './animation';
+import { defaults, evaluate } from './animation';
 import { exampleLayers } from './example';
 import { previewGeometry } from './geometry';
 import type { Corner, Geometry } from './geometry';
@@ -17,7 +17,7 @@ import { randomAnimations } from './randomAnimation';
 import type { RandomGenre } from './randomAnimation';
 import { applyAutomaticAnimations } from './autoAnimation';
 import type { AnimationDensity } from './autoAnimation';
-import { AnimatedText } from './AnimatedText';
+import { Scene } from './Scene';
 import { FontPicker } from './FontPicker';
 import { createBrowserFontProvider, resolveTextFont } from './fonts';
 import type { FontOption } from './fonts';
@@ -25,9 +25,12 @@ import { editMusic, readMusic, sourceTime, splitMusic } from './music';
 import type { MusicClip } from './music';
 import { readProject, saveProject } from './project';
 import type { MusicAsset } from './project';
+import { defaultSettings, downloadFile, makeProjectFile, readProjectFile, uniqueProjectIds, validateProject } from './projectFile';
+import type { Settings } from './projectFile';
+import type { Project } from './project';
+import { ExportDialog } from './ExportDialog';
 import { createHistory } from './history';
 import { independentSelection, moveSelection, selectionKey } from './selection';
-import { FRAME_DURATION } from './model';
 import './style.css';
 
 const kinds = [['text', 'テキスト'], ['rectangle', '四角形'], ['ellipse', '円・楕円']] as const;
@@ -76,6 +79,13 @@ function App() {
     (a, b) => a.asset === b.asset && JSON.stringify(a.layers) === JSON.stringify(b.layers) &&
       JSON.stringify(a.musicClips) === JSON.stringify(b.musicClips)));
   const [{ layers, musicClips, asset }, setEditData] = useState(history.current);
+  const [settings, setSettings] = useState(defaultSettings);
+  const saved = useRef({ data: history.current, settings: defaultSettings });
+  const dirty = saved.current.data !== history.current || saved.current.settings !== settings;
+  const [projectMenu, setProjectMenu] = useState(false);
+  const [exportOpen, setExportOpen] = useState(false);
+  const [loadingProject, setLoadingProject] = useState(false);
+  const projectPicker = useRef<HTMLInputElement>(null);
   function setLayers(update: (items: Layer[]) => Layer[]) {
     setEditData(history.update(data => ({ ...data, layers: update(data.layers) })));
   }
@@ -226,20 +236,29 @@ function App() {
     if (frame.current !== null) cancelAnimationFrame(frame.current);
   }, []);
 
+  function restoreProject(project: Project, restoredAsset?: MusicAsset) {
+    const unpacked = unpackLayers(project.layers);
+    const relative = project.animationTime === 'relative' ? unpacked : unpacked.map(migrateAbsoluteAnimations);
+    const restored = uniqueProjectIds(relative, project.musicClips ?? []);
+    const nextSettings = project.settings ?? defaultSettings;
+    pause();
+    history.reset({ ...restored, asset: restoredAsset });
+    saved.current = { data: history.current, settings: nextSettings };
+    setEditData(history.current);
+    setSettings(nextSettings);
+    const first = restored.layers[0];
+    setSelection(first ? { layerId: first.id } : null);
+    setSelectedMusicId(restoredAsset ? undefined : restored.musicClips[0]?.id);
+    setExpanded(new Set(first ? [first.id] : []));
+    clipboard.current = null;
+    nextLayer.current = project.layers.length + 1;
+    clock.current = 0;
+    setTime(0);
+  }
+
   useEffect(() => {
     readProject().then(result => {
-      if (result.project) {
-        const unpacked = unpackLayers(result.project.layers);
-        const restoredLayers = result.project.animationTime === 'relative' ? unpacked : unpacked.map(migrateAbsoluteAnimations);
-        const clips = result.project.musicClips ?? (result.project.music ? [result.project.music] : []);
-        const restored = clips.map(clip => ({ ...clip, id: clip.id ?? crypto.randomUUID() }));
-        history.reset({ layers: restoredLayers, musicClips: restored, asset: result.asset });
-        setEditData(history.current);
-        setSelection(restoredLayers[0] ? { layerId: restoredLayers[0].id } : null);
-        if (!result.asset) setSelectedMusicId(restored[0]?.id);
-        setExpanded(new Set(restoredLayers[0] ? [restoredLayers[0].id] : []));
-        nextLayer.current = result.project.layers.length + 1;
-      }
+      if (result.project) restoreProject(validateProject(result.project), result.asset);
       setReady(true);
     }).catch(() => {
       setStorageError('保存済みプロジェクトを開けませんでした。');
@@ -247,19 +266,81 @@ function App() {
     });
   }, []);
 
+  function projectData(data: EditData): Project {
+    return { version: 1, settings, layers: packLayers(data.layers), music: data.musicClips[0] ?? null,
+      musicClips: data.musicClips, animationTime: 'relative' };
+  }
+
   function persistProject(data: EditData) {
+    const project = projectData(data);
     saveQueue.current = saveQueue.current.then(() =>
-      saveProject({ layers: packLayers(data.layers), music: data.musicClips[0] ?? null,
-        musicClips: data.musicClips, animationTime: 'relative' }, data.asset))
-      .then(() => setStorageError(''))
+      saveProject(project, data.asset))
       .catch(() => setStorageError('プロジェクトを保存できませんでした。ブラウザーの空き容量を確認してください。'));
+  }
+
+  function saveFile(packaged = false) {
+    const data = history.current;
+    try {
+      if (packaged && data.musicClips.length && !data.asset) throw new Error('素材込み保存の前に音楽を再リンクしてください。');
+      downloadFile(makeProjectFile(projectData(data), packaged ? data.asset : undefined), settings.name, '.mveasy');
+      saved.current = { data, settings };
+      setProjectMenu(false);
+      setStorageError('');
+    } catch (error) {
+      setStorageError(error instanceof Error ? error.message : '保存できませんでした。');
+    }
+  }
+
+  function newProject() {
+    if (timelineEditing.current || loadingMusic) return;
+    finishPreviewDrag();
+    if (dirty && !window.confirm('未保存の変更があります。新規プロジェクトを作成しますか？')) return;
+    restoreProject({ version: 1, settings: { ...defaultSettings }, layers: [], music: null, animationTime: 'relative' });
+    setStorageError('');
+    setProjectMenu(false);
+    setReady(true);
+  }
+
+  async function openFile(file: File) {
+    if (dirty && !window.confirm('未保存の変更があります。別のプロジェクトを開きますか？')) return;
+    setLoadingProject(true);
+    setStorageError('');
+    try {
+      const { project, audio } = await readProjectFile(file);
+      let restoredAsset: MusicAsset | undefined;
+      if (audio) {
+        try {
+          const { peaks } = await readMusic(audio);
+          restoredAsset = { file: audio, peaks };
+        } catch {
+          setStorageError('同梱された音楽を再生できません。タイムラインから音楽を再リンクしてください。');
+        }
+      }
+      restoreProject(project, restoredAsset);
+      setReady(true);
+    } catch (error) {
+      setStorageError(error instanceof SyntaxError ? 'プロジェクトのJSONを読み込めませんでした。'
+        : error instanceof Error ? error.message : 'プロジェクトを開けませんでした。');
+    } finally {
+      setLoadingProject(false);
+    }
   }
 
   useEffect(() => {
     if (!ready) return;
     const timer = setTimeout(() => persistProject(history.current), 350);
     return () => clearTimeout(timer);
-  }, [ready, layers, musicClips, asset]);
+  }, [ready, layers, musicClips, asset, settings]);
+
+  useEffect(() => {
+    const exit = (event: BeforeUnloadEvent) => {
+      if (saved.current.data === history.current && saved.current.settings === settings) return;
+      event.preventDefault();
+      event.returnValue = '';
+    };
+    window.addEventListener('beforeunload', exit);
+    return () => window.removeEventListener('beforeunload', exit);
+  }, [history, settings]);
 
   useEffect(() => {
     const audio = media.current!;
@@ -389,16 +470,18 @@ function App() {
     const isEditing = (target: EventTarget | null) => target instanceof Element &&
       target.closest('input, textarea, select, [contenteditable]:not([contenteditable="false"])');
     function onSpace(event: KeyboardEvent) {
+      if (exportOpen || loadingProject) return;
+      if (event.ctrlKey && !event.altKey && !event.metaKey && !event.shiftKey &&
+          !event.isComposing && event.keyCode !== 229 && event.key.toLowerCase() === 's') {
+        event.preventDefault();
+        if (ready && !loadingMusic && !timelineEditing.current && !previewDrag.current && !event.repeat) saveFile();
+        return;
+      }
       if (isEditing(event.target)) return;
       if (event.defaultPrevented || event.isComposing || event.keyCode === 229) return;
       if (timelineEditing.current) return;
       const key = event.key.toLowerCase();
       if (event.ctrlKey && !event.altKey && !event.metaKey && !event.shiftKey) {
-        if (key === 's') {
-          event.preventDefault();
-          if (ready) persistProject(history.current);
-          return;
-        }
         if (key === 'a') {
           event.preventDefault();
           const effectsFocused = event.target instanceof Element && event.target.closest('.animation-row, .animation-settings');
@@ -436,7 +519,7 @@ function App() {
         }
         if (key === 'arrowleft' || key === 'arrowright') {
           event.preventDefault();
-          seek(clamp(clock.current + (key === 'arrowleft' ? -FRAME_DURATION : FRAME_DURATION), 0, duration));
+          seek(clamp(clock.current + (key === 'arrowleft' ? -1 : 1) / settings.fps, 0, duration));
           return;
         }
       }
@@ -484,6 +567,7 @@ function App() {
 
   useEffect(() => {
     function onJump(event: KeyboardEvent) {
+      if (exportOpen || loadingProject) return;
       if (event.defaultPrevented || !event.altKey || event.shiftKey || event.ctrlKey || event.metaKey ||
           event.isComposing || event.keyCode === 229 || !['ArrowLeft', 'ArrowRight'].includes(event.key)) return;
       if (timelineEditing.current) return;
@@ -495,7 +579,7 @@ function App() {
     }
     window.addEventListener('keydown', onJump);
     return () => window.removeEventListener('keydown', onJump);
-  }, [layers, musicClips, asset]);
+  }, [layers, musicClips, asset, exportOpen, loadingProject]);
 
   useEffect(() => {
     if (!addOpen) return;
@@ -720,6 +804,17 @@ function App() {
   return <main className="editor" ref={editor} style={{
     '--timeline-height': timelineHeight === null ? undefined : `${timelineHeight}px`,
   } as CSSProperties}>
+    {exportOpen && <ExportDialog settings={settings} onSettings={setSettings} onClose={() => setExportOpen(false)}
+      snapshot={{ layers, clips: musicClips, asset, duration, fontProvider }} />}
+    <input ref={projectPicker} type="file" hidden accept=".mveasy,.json"
+      onChange={event => {
+        const file = event.currentTarget.files?.[0];
+        event.currentTarget.value = '';
+        if (file) {
+          setProjectMenu(false);
+          void openFile(file);
+        }
+      }} />
     <audio ref={media} preload="auto" hidden />
     <input ref={picker} type="file" hidden accept=".mp3,.wav,.m4a,audio/mpeg,audio/wav,audio/mp4"
       onChange={event => {
@@ -727,10 +822,36 @@ function App() {
         event.currentTarget.value = '';
         if (file && frame.current === null) void importMusic(file);
       }} />
-    <header className="app-header">
+    <header className="app-header" inert={loadingProject}>
       <div className="brand"><span className="brand-icon"><Icon name="logo" size={22} /></span><h1>MV <em>Easy</em></h1></div>
       <span className="header-divider" />
-      <span className="project-name">文字PVエディター</span>
+      <input className="project-name" aria-label="プロジェクト名" value={settings.name} maxLength={120}
+        onChange={event => setSettings({ ...settings, name: event.target.value })} />
+      <div className="project-actions">
+        <button type="button" onClick={() => saveFile()} disabled={!ready || loadingMusic}>保存</button>
+        <button type="button" aria-label="保存の種類" aria-expanded={projectMenu} disabled={!ready || loadingMusic}
+          onClick={() => setProjectMenu(!projectMenu)}>▾</button>
+        {projectMenu && <div className="add-menu project-save-menu">
+          <button type="button" onClick={() => saveFile()}>通常保存（編集データ）</button>
+          <button type="button" onClick={() => saveFile(true)}>素材込み保存（音楽を同梱）</button>
+          <button type="button" onClick={newProject}>新規プロジェクト</button>
+        </div>}
+        <button type="button" onClick={() => {
+          if (timelineEditing.current) return;
+          finishPreviewDrag();
+          pause();
+          projectPicker.current?.click();
+        }}
+          disabled={loadingMusic || !ready && !storageError}>開く</button>
+        <button type="button" onClick={() => {
+          if (timelineEditing.current) return;
+          finishPreviewDrag();
+          pause();
+          setExportOpen(true);
+        }} disabled={!ready || loadingMusic}>動画を書き出す</button>
+        <label>背景 <input type="color" aria-label="背景色" value={settings.background}
+          onChange={event => setSettings({ ...settings, background: event.target.value })} /></label>
+      </div>
       <div className="add-area" ref={addMenu} onKeyDown={event => { if (event.key === 'Escape') setAddOpen(false); }}>
         <button type="button" className="primary add-button" aria-expanded={addOpen} disabled={playing || !ready || loadingMusic}
           onClick={() => setAddOpen(open => !open)}><Icon name="plus" />追加<Icon name="down" size={13} /></button>
@@ -741,115 +862,34 @@ function App() {
         </div>}
       </div>
     </header>
-    <div className="workspace">
+    <div className="workspace" inert={loadingProject}>
       <TemplateLibrary kind={layer?.kind} playing={playing} onAdd={addAnimation} onAuto={autoAnimate}
         targetName={layer ? (layer.kind === 'text' ? layer.text || layer.name : layer.name) : undefined}
         onRandom={addRandom} />
       <section className="monitor" aria-label="プレビュー">
-        <div className="monitor-head"><h2>プレビュー</h2><span>1920 × 1080</span></div>
+        <div className="monitor-head"><h2>プレビュー</h2><span>{settings.resolution * 16 / 9} × {settings.resolution}</span></div>
         <div className="stage">
-          <div className="canvas" ref={canvas}>
-            {sceneGroups.flatMap(group => {
-              const nextStarts = new Set(group.map(item => item.start));
-              return group.filter(item => item.end !== time || !nextStarts.has(time));
-            }).reverse().map(item => {
-              const pose = evaluate(item, time, registry);
-              const pastPoses = pose.trails ? sampleTrails(item, time, pose, registry) : [];
-              if ((pose.opacity === 0 || pose.scale === 0) && pastPoses.length === 0) return null;
-              const unit = (value: number) => `${value * 100 / CANVAS.width}cqw`;
-              const visualFilters = (pose.filters ?? []).filter(filter =>
-                filter.kind !== 'directional' || (filter.strength > 0 && (filter.x !== 0 || filter.y !== 0)));
-              const filterId = (index: number) => `directional-${item.id}-${index}`;
-              const filters = [
-                pose.blur && `blur(${unit(pose.blur)})`,
-                pose.hue && `hue-rotate(${pose.hue}deg)`,
-                pose.glow && `drop-shadow(0 0 ${unit(pose.glow)} ${pose.color})`,
-                pose.rgb && `drop-shadow(${unit(pose.rgb)} 0 0 #f03a6c) drop-shadow(${unit(-pose.rgb)} 0 0 #36cfff)`,
-                ...visualFilters.map((filter, index) => {
-                  if (filter.kind === 'shadow') return `drop-shadow(${unit(filter.x)} ${unit(filter.y)} ${unit(filter.blur)} ${filter.color})`;
-                  if (filter.kind === 'directional') return `url("#${filterId(index)}")`;
-                  const value = filter.kind === 'blur' ? unit(filter.value)
-                    : filter.kind === 'hue-rotate' ? `${filter.value}deg` : filter.value;
-                  return `${filter.kind}(${value})`;
-                }),
-              ].filter(Boolean).join(' ');
+          <div className="canvas" ref={canvas} style={{ background: settings.background }}>
+            <Scene groups={sceneGroups} time={time} fontProvider={fontProvider} renderObject={(item, pose, props) => {
               const selected = !playing && layer?.id === item.id;
-              const typography = item.kind === 'text' ? resolveTextFont(item, fontProvider) : undefined;
               const pointerHandlers = {
                 onPointerMove: movePreviewDrag,
                 onPointerCancel: (event: PointerEvent<HTMLButtonElement>) => finishPreviewDrag(event.pointerId, true),
                 onLostPointerCapture: (event: PointerEvent<HTMLButtonElement>) => finishPreviewDrag(event.pointerId),
               };
-              const placement = (part: Pose) => ({
-                  left: `${part.x / CANVAS.width * 100}%`, top: `${part.y / CANVAS.height * 100}%`,
-                  width: `${item.width / CANVAS.width * 100}%`, height: `${item.height / CANVAS.height * 100}%`,
-                  fontSize: unit(item.fontSize), opacity: part.opacity,
-                  transform: `translate(-50%, -50%) rotate(${part.rotation}deg) skewX(${part.skew ?? 0}deg) scale(${part.scale * (part.scaleX ?? 1)}, ${part.scale * (part.scaleY ?? 1)})`,
-                  color: part.color,
-              });
-              const textAt = (part: Pose) => part.glyphs ? <AnimatedText text={item.text} effects={part.glyphs} /> : item.text;
-              const lineEffects = pose.lines;
-              const lines = lineEffects?.map(line => {
-                const spacing = Math.max(2, line.spacing);
-                const color = line.color + Math.round(line.opacity * 255).toString(16).padStart(2, '0');
-                if (line.bands) {
-                  const stops = line.bands.map((edge, index) => index % 2 === 0
-                    ? `transparent ${unit(edge)}, ${color} ${unit(edge)}`
-                    : `${color} ${unit(edge)}, transparent ${unit(edge)}`);
-                  return `repeating-linear-gradient(0deg, transparent 0, ${stops.join(', ')}, transparent ${unit(spacing)})`;
-                }
-                return `repeating-linear-gradient(0deg, transparent 0 ${unit(spacing - 1)}, ${color} ${unit(spacing - 1)} ${unit(spacing)})`;
-              }).join(', ');
-              return <div key={item.id}>
-                {visualFilters.map((filter, index) => {
-                  if (filter.kind !== 'directional') return null;
-                  const dx = filter.x / item.width;
-                  const dy = filter.y / item.height;
-                  const taps = [0.2, 0.4, 0.6, 0.8, 1];
-                  return <svg key={index} width="0" height="0" className="effect-definitions" aria-hidden="true">
-                    <filter id={filterId(index)} primitiveUnits="objectBoundingBox" colorInterpolationFilters="sRGB"
-                      x={-0.2 - Math.abs(dx)} y={-0.2 - Math.abs(dy)} width={1.4 + 2 * Math.abs(dx)} height={1.4 + 2 * Math.abs(dy)}>
-                      <feComponentTransfer in="SourceGraphic" result="faint">
-                        <feFuncA type="linear" slope={filter.strength / 4} />
-                      </feComponentTransfer>
-                      {taps.map(tap => <feOffset key={tap} in="faint" dx={dx * tap} dy={dy * tap} result={`tap${tap}`} />)}
-                      <feMerge>
-                        {taps.slice().reverse().map(tap => <feMergeNode key={tap} in={`tap${tap}`} />)}
-                        <feMergeNode in="SourceGraphic" />
-                      </feMerge>
-                    </filter>
-                  </svg>;
-                })}
-                {pastPoses.map((past, index) =>
-                  <div className="canvas-object" aria-hidden="true" key={index} style={placement(past)}>
-                    <div className={`canvas-content trail-copy ${item.kind}`} style={typography ? {
-                      fontFamily: typography.fontFamily, fontWeight: typography.fontWeight, fontStyle: typography.fontStyle,
-                    } : { backgroundColor: past.color }}>{item.kind === 'text' && textAt(past)}</div>
-                  </div>)}
-                <div className="canvas-object" style={placement(pose)}>
-                <button type="button" aria-label={item.name} disabled={playing}
-                  className={`canvas-content ${item.kind} ${selected ? 'canvas-selected' : ''}`}
-                  style={{
-                    ...(typography ? { fontFamily: typography.fontFamily, fontWeight: typography.fontWeight,
-                      fontStyle: typography.fontStyle } : { backgroundColor: pose.color }),
-                    filter: filters || undefined,
-                    backgroundImage: lines,
-                    backgroundPosition: lineEffects?.map(line => `0 ${unit(line.offset)}`).join(', '),
-                    clipPath: pose.slice ? `inset(${Math.min(pose.slice, 45)}% 0 0)` : undefined,
-                  }}
+              return <>
+                <button {...props} type="button" aria-label={item.name} disabled={playing}
+                  className={props.className + (selected ? ' canvas-selected' : '')}
                   onClick={() => { setSelection({ layerId: item.id }); setSelectedMusicId(undefined); }}
-                  onPointerDown={event => startPreviewDrag(event, item, pose)} {...pointerHandlers}>
-                  {item.kind === 'text' && textAt(pose)}
-                </button>
+                  onPointerDown={event => startPreviewDrag(event, item, pose)} {...pointerHandlers} />
                 {selected && corners.map(([label, corner]) => <button type="button" key={label}
                   aria-label={`${item.name}の${label}をリサイズ`} className="preview-handle"
                   style={{ left: corner[0] < 0 ? 0 : '100%', top: corner[1] < 0 ? 0 : '100%',
                     cursor: corner[0] === corner[1] ? 'nwse-resize' : 'nesw-resize',
                     transform: `translate(-50%, -50%) scale(${1 / pose.scale})` }}
                   onPointerDown={event => startPreviewDrag(event, item, pose, corner)} {...pointerHandlers} />)}
-                </div>
-              </div>;
-            })}
+              </>;
+            }} />
           </div>
         </div>
         <div className="transport">
@@ -987,7 +1027,7 @@ function App() {
           try { localStorage.setItem(heightKey, String(drag.value)); } catch { /* Storage may be unavailable. */ }
         }
       }} />
-    <Timeline layers={layers} selection={musicSelected ? null : selection} expanded={expanded} time={time}
+    <div inert={loadingProject} style={{ display: 'contents' }}><Timeline layers={layers} selection={musicSelected ? null : selection} expanded={expanded} time={time}
       duration={duration} musicClips={musicClips} peaks={asset?.peaks} selectedItems={selectedItems}
       onSelectMusic={id => { if (id) selectItem({ layerId: id }); }} onEditMusic={(edge, delta, original) => {
         if (frame.current !== null || loadingMusic) return;
@@ -1019,7 +1059,7 @@ function App() {
         if (next.has(id)) next.delete(id);
         else next.add(id);
         return next;
-      })} />
+      })} /></div>
   </main>;
 }
 

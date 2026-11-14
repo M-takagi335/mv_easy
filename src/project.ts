@@ -1,7 +1,8 @@
 import type { ProjectLayer } from './model.ts';
+import type { Settings } from './projectFile.ts';
 import type { MusicClip } from './music.ts';
 
-export type Project = { layers: ProjectLayer[]; music: MusicClip | null; musicClips?: MusicClip[]; animationTime?: 'relative' };
+export type Project = { version?: 1; settings?: Settings; layers: ProjectLayer[]; music: MusicClip | null; musicClips?: MusicClip[]; animationTime?: 'relative' };
 export type MusicAsset = { file: Blob; peaks: Float32Array };
 
 function openProject(): Promise<IDBDatabase> {
@@ -45,8 +46,8 @@ export async function saveProject(project: Project, asset?: MusicAsset) {
       request.onsuccess = () => {
         const previousId = (request.result as Project | undefined)?.music?.asset.id;
         const nextId = project.music?.asset.id;
-        if (asset && nextId && previousId !== nextId) store.put(asset, nextId);
-        if (previousId && previousId !== nextId) store.delete(previousId);
+        if (asset && nextId) store.put(asset, nextId);
+        if (previousId && (previousId !== nextId || !asset)) store.delete(previousId);
         store.put(project, 'current');
       };
       transaction.oncomplete = () => resolve();

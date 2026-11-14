@@ -32,7 +32,7 @@ export function editMusic(clip: MusicClip, edge: Edge, delta: number): MusicClip
   return { ...clip, end: clamp(clip.end + shift, clip.start + minimum, clip.start + clip.asset.duration - clip.inPoint) };
 }
 
-export async function readMusic(file: File) {
+export async function readMusic(file: Blob) {
   const context = new AudioContext();
   try {
     const buffer = await context.decodeAudioData(await file.arrayBuffer());
