@@ -1,12 +1,51 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { defaults, evaluate } from '../src/animation.ts';
-import { editLayerSpan, editSpan, newLayer } from '../src/model.ts';
+import { previewGeometry } from '../src/geometry.ts';
+import { adjacentEndpoint, editLayerSpan, editSpan, newLayer, reorderById } from '../src/model.ts';
 import { registry, templates } from '../src/templates.ts';
 
 function clip(template, start, end) {
   return { id: template, template, start, end, params: defaults(registry.get(template)) };
 }
+
+test('preview movement changes the base position even while a slide offsets the object', () => {
+  const layer = newLayer('rectangle', 1);
+  layer.animations = [clip('slide-in', 0, 2)];
+  const pose = evaluate(layer, 1, registry);
+  const moved = { ...layer, ...previewGeometry(layer, pose, 80, -40) };
+  const result = evaluate(moved, 1, registry);
+  assert.equal(result.x, pose.x + 80);
+  assert.equal(result.y, pose.y - 40);
+});
+
+test('resizing a rotated and scaled rectangle keeps its opposite corner anchored', () => {
+  const base = { x: 500, y: 500, width: 200, height: 100 };
+  const pose = { ...base, scale: 2, rotation: 90, opacity: 1, color: '#ffffff' };
+  assert.deepEqual(previewGeometry(base, pose, -40, 80, [1, 1]),
+    { x: 480, y: 540, width: 240, height: 120 });
+});
+
+test('endpoint navigation includes child clips, skips duplicates, and can return to zero', () => {
+  const layer = newLayer('text', 1);
+  layer.animations = [clip('fade-in', 0, 2), clip('fade-out', 2, 5)];
+  assert.equal(adjacentEndpoint([layer], 0, 1), 2);
+  assert.equal(adjacentEndpoint([layer], 2, 1), 5);
+  assert.equal(adjacentEndpoint([layer], 2, -1), 0);
+  assert.equal(adjacentEndpoint([layer], 0, -1), undefined);
+  assert.equal(adjacentEndpoint([layer], 15, 1), undefined);
+});
+
+test('reordering sibling colors changes compositing without changing their times', () => {
+  const layer = newLayer('text', 1);
+  const red = { ...clip('color', 0, 2), id: 'red', params: { color: '#ff0000' } };
+  const blue = { ...clip('color', 0, 2), id: 'blue', params: { color: '#0000ff' } };
+  layer.animations = [red, blue];
+  assert.equal(evaluate(layer, 2, registry).color, '#0000ff');
+  layer.animations = reorderById(layer.animations, blue.id, { id: red.id, after: false });
+  assert.deepEqual(layer.animations, [blue, red]);
+  assert.equal(evaluate(layer, 2, registry).color, '#ff0000');
+});
 
 test('overlapping animations compose and seeking back restores the same pose', () => {
   const layer = newLayer('text', 1);

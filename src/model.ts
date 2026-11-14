@@ -28,6 +28,30 @@ export type Layer = {
 };
 export type Span = { start: number; end: number };
 export type Edge = 'move' | 'start' | 'end';
+export type Reorder = { id: string; after: boolean };
+
+export function adjacentEndpoint(layers: Layer[], time: number, direction: -1 | 1): number | undefined {
+  let next: number | undefined;
+  for (const layer of layers) {
+    for (const span of [layer, ...layer.animations]) {
+      for (const endpoint of [span.start, span.end]) {
+        if (direction * (endpoint - time) > 1e-8 &&
+            (next === undefined || direction * (endpoint - next) < 0)) next = endpoint;
+      }
+    }
+  }
+  return next;
+}
+
+export function reorderById<T extends { id: string }>(items: T[], id: string, target: Reorder): T[] {
+  const item = items.find(entry => entry.id === id);
+  if (!item || id === target.id) return items;
+  const remaining = items.filter(entry => entry.id !== id);
+  const index = remaining.findIndex(entry => entry.id === target.id);
+  if (index < 0) return items;
+  remaining.splice(index + Number(target.after), 0, item);
+  return remaining;
+}
 export const clamp = (value: number, min: number, max: number) => Math.max(min, Math.min(max, value));
 const ticks = (time: number) => Math.round(time / STEP);
 const seconds = (tick: number) => tick / 10;
