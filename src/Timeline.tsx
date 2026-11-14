@@ -68,28 +68,32 @@ export function Timeline({ layers, selection, selectedItems, expanded, time, dur
     const scroll = scrollRef.current!;
     const ruler = rulerRef.current!;
     function wheel(event: WheelEvent) {
-      if (event.ctrlKey) {
+      const mode = event.deltaMode;
+      if (!event.ctrlKey) {
+        if (!scroll.contains(event.target as Node) || event.shiftKey ||
+            Math.abs(event.deltaX) > Math.abs(event.deltaY) || !event.deltaY) return;
+        if (event.target instanceof Element &&
+            event.target.closest('.layer-column, .layer-label, .empty-track, .empty-timeline')) return;
         event.preventDefault();
-        const mode = event.deltaMode;
-        const delta = event.deltaY || event.deltaX;
-        const pixels = delta * (mode === 1 ? 16 : mode === 2 ? scroll.clientWidth : 1);
-        scroll.scrollLeft = clamp(scroll.scrollLeft + pixels, 0, scroll.scrollWidth - scroll.clientWidth);
+        scroll.scrollLeft += event.deltaY * (mode === 1 ? 16 : mode === 2 ? scroll.clientWidth : 1);
         return;
       }
-      if (!scroll.contains(event.target as Node)) return;
-      if (event.shiftKey || Math.abs(event.deltaX) > Math.abs(event.deltaY) || !event.deltaY) return;
-      if (event.target instanceof Element && event.target.closest('.layer-column, .layer-label, .empty-track')) return;
-      const bounds = ruler.getBoundingClientRect();
-      if (event.clientX < bounds.left || event.clientX > bounds.right) return;
       event.preventDefault();
-      const pixels = event.deltaY * (event.deltaMode === 1 ? 16 : event.deltaMode === 2 ? scroll.clientHeight : 1);
+      const pixels = event.deltaY * (mode === 1 ? 16 : mode === 2 ? scroll.clientHeight : 1);
       const next = clamp(zoomRef.current * Math.exp(-pixels * 0.002), 1, 8);
       if (next === zoomRef.current) return;
-      const fraction = (event.clientX - bounds.left) / bounds.width;
+      const bounds = ruler.getBoundingClientRect();
+      if (!bounds.width) return;
+      const labelRight = ruler.previousElementSibling?.getBoundingClientRect().right ?? bounds.left;
+      const viewport = scroll.getBoundingClientRect();
+      const left = Math.max(bounds.left, labelRight);
+      const right = Math.min(bounds.right, viewport.left + scroll.clientWidth);
+      const anchor = clamp(event.clientX, left, Math.max(left, right));
+      const fraction = (anchor - bounds.left) / bounds.width;
       zoomRef.current = next;
       flushSync(() => setZoom(next));
       const resized = ruler.getBoundingClientRect();
-      scroll.scrollLeft += resized.left + fraction * resized.width - event.clientX;
+      scroll.scrollLeft += resized.left + fraction * resized.width - anchor;
     }
     timeline.addEventListener('wheel', wheel, { passive: false });
     return () => timeline.removeEventListener('wheel', wheel);
