@@ -20,6 +20,8 @@ import type { MusicClip } from './music';
 import { readProject, saveProject } from './project';
 import type { MusicAsset } from './project';
 import { createHistory } from './history';
+import { independentSelection, moveSelection, selectionKey } from './selection';
+import { FRAME_DURATION } from './model';
 import './style.css';
 
 const kinds = [['text', 'テキスト'], ['rectangle', '四角形'], ['ellipse', '円・楕円']] as const;
@@ -75,13 +77,15 @@ function App() {
     setEditData(history.update(data => ({ ...data, musicClips: typeof update === 'function' ? update(data.musicClips) : update })));
   }
   function finishEdit(cancel = false) { setEditData(history.finish(cancel)); }
-  const [selection, setSelection] = useState<Selection | null>(() => ({ layerId: layers[0].id }));
+  const [selection, setPrimarySelection] = useState<Selection | null>(() => ({ layerId: layers[0].id }));
   const [expanded, setExpanded] = useState(() => new Set([layers[0].id]));
   const [time, setTime] = useState(2.4);
   const [selectedMusicId, setSelectedMusicId] = useState<string>();
   const music = musicClips.find(clip => clip.id === selectedMusicId);
   const musicSelected = music !== undefined;
-  const copiedText = useRef<Layer | null>(null);
+  const [multiple, setMultiple] = useState<Selection[]>([]);
+  const clipboard = useRef<{ data: EditData; targets: Selection[] } | null>(null);
+  const groupDrag = useRef<{ data: EditData; targets: Selection[] } | null>(null);
   const [ready, setReady] = useState(false);
   const [loadingMusic, setLoadingMusic] = useState(false);
   const [audioError, setAudioError] = useState('');
@@ -109,6 +113,104 @@ function App() {
   const layer = musicSelected ? undefined : layers.find(item => item.id === selection?.layerId);
   const animation = layer?.animations.find(item => item.id === selection?.animationId);
   const animationRange = layer && animation ? animationTimelineSpan(layer, animation) : undefined;
+  const primary = selectedMusicId ? { layerId: selectedMusicId } : selection;
+  const selectedItems = multiple.length ? multiple : primary ? [primary] : [];
+
+  function setSelection(target: Selection | null) {
+    setMultiple([]);
+    setPrimarySelection(target);
+  }
+
+  function selectItem(target: Selection, additive = false) {
+    const items = additive && selectedItems.some(item => selectionKey(item) === selectionKey(target))
+      ? selectedItems.filter(item => selectionKey(item) !== selectionKey(target))
+      : [...(additive ? selectedItems : []), target];
+    setMultiple(additive ? items : []);
+    const last = items.at(-1);
+    const audio = musicClips.some(item => item.id === last?.layerId);
+    setPrimarySelection(audio ? null : last ?? null);
+    setSelectedMusicId(audio ? last?.layerId : undefined);
+  }
+
+  function picked(items: Selection[]) {
+    const keys = new Set(independentSelection(items).map(selectionKey));
+    return {
+      layers: layers.flatMap(item => {
+        if (keys.has(item.id)) return [item];
+        const animations = item.animations.filter(clip => keys.has(selectionKey({ layerId: item.id, animationId: clip.id })));
+        return animations.length ? [{ ...item, animations }] : [];
+      }),
+      musicClips: musicClips.filter(item => keys.has(item.id!)), asset,
+    };
+  }
+
+  function deleteItems() {
+    const keys = new Set(independentSelection(selectedItems).map(selectionKey));
+    setEditData(history.update(data => ({
+      ...data,
+      layers: data.layers.filter(item => !keys.has(item.id)).map(item => ({
+        ...item, animations: item.animations.filter(clip => !keys.has(selectionKey({ layerId: item.id, animationId: clip.id }))),
+      })),
+      musicClips: data.musicClips.filter(item => !keys.has(item.id!)),
+    })));
+    setMultiple([]);
+    setSelection(null);
+    setSelectedMusicId(undefined);
+  }
+
+  function pasteItems(data: EditData, targets: Selection[], duplicate: boolean) {
+    const whole = new Set(targets.filter(item => !item.animationId).map(item => item.layerId));
+    const objects = data.layers.filter(item => whole.has(item.id));
+    const effects = data.layers.filter(item => !whole.has(item.id));
+    const clips = [...objects, ...data.musicClips];
+    const origin = Math.min(...clips.map(item => item.start));
+    let offset = duplicate ? Math.max(...clips.map(item => item.end)) - origin : clock.current - origin;
+    // Preserve spacing by shifting the entire batch beyond any conflicting audio.
+    const compatibleAudio = data.asset && (!musicClips.length || data.musicClips[0]?.asset.id === musicClips[0].asset.id);
+    if (compatibleAudio && data.musicClips.length && musicClips.length) {
+      offset = Math.max(offset, Math.max(...musicClips.map(item => item.end)) - Math.min(...data.musicClips.map(item => item.start)));
+    }
+    const ids = new Map<string, string>();
+    const cloneEffect = (item: Layer['animations'][number]) => ({
+      ...item, id: crypto.randomUUID(), params: { ...item.params },
+      phase: item.phase && [...item.phase] as [number, number],
+    });
+    const copies = objects.map(item => {
+      const id = crypto.randomUUID();
+      const track = trackId(item);
+      if (!ids.has(track)) ids.set(track, id);
+      return { ...item, id, textTrackId: item.kind === 'text' ? ids.get(track) : undefined,
+        start: item.start + offset, end: item.end + offset, animations: item.animations.map(cloneEffect) };
+    });
+    const audio = (compatibleAudio ? data.musicClips : [])
+      .map(item => ({ ...item, id: crypto.randomUUID(), start: item.start + offset, end: item.end + offset }));
+    const effectCopies = effects.flatMap(owner => owner.animations.map(item => ({ owner, item })));
+    const first = Math.min(...effectCopies.map(({ owner, item }) => owner.start + item.start));
+    const effectLength = Math.max(...effectCopies.map(({ owner, item }) => owner.start + item.end)) - first;
+    const additions = effectCopies.flatMap(({ owner, item }) => {
+      const destination = duplicate ? layers.find(candidate => candidate.id === owner.id) : layer;
+      if (!destination) return [];
+      const shift = duplicate ? effectLength : Math.max(clock.current, destination.start) - first + owner.start - destination.start;
+      return [{ layerId: destination.id, clip: { ...cloneEffect(item), start: item.start + shift, end: item.end + shift } }];
+    });
+    if (!copies.length && !audio.length && !additions.length) return;
+    setEditData(history.update(current => ({
+      ...current, asset: audio.length && !current.musicClips.length ? data.asset : current.asset,
+      musicClips: [...current.musicClips, ...audio],
+      layers: [...current.layers.map(item => {
+        const imported = additions.filter(entry => entry.layerId === item.id).map(entry => entry.clip);
+        if (imported.length) openLayer(item.id);
+        return imported.length ? { ...item, animations: [...item.animations, ...imported] } : item;
+      }), ...copies],
+    })));
+    const next = [...copies, ...audio].map(item => ({ layerId: item.id! } as Selection))
+      .concat(additions.map(entry => ({ layerId: entry.layerId, animationId: entry.clip.id })));
+    const last = next.at(-1)!;
+    const isAudio = audio.some(item => item.id === last.layerId);
+    setPrimarySelection(isAudio ? null : last);
+    setSelectedMusicId(isAudio ? last.layerId : undefined);
+    setMultiple(next);
+  }
   const template = animation && registry.get(animation.template);
 
   useEffect(() => () => {
@@ -136,13 +238,16 @@ function App() {
     });
   }, []);
 
-  useEffect(() => {
-    if (!ready) return;
-    const timer = setTimeout(() => {
-      saveProject({ layers: packLayers(layers), music: musicClips[0] ?? null, musicClips, animationTime: 'relative' }, asset).then(() => {
+  function persistProject(data: EditData) {
+      saveProject({ layers: packLayers(data.layers), music: data.musicClips[0] ?? null,
+        musicClips: data.musicClips, animationTime: 'relative' }, data.asset).then(() => {
         setStorageError('');
       }).catch(() => setStorageError('プロジェクトを保存できませんでした。ブラウザーの空き容量を確認してください。'));
-    }, 350);
+  }
+
+  useEffect(() => {
+    if (!ready) return;
+    const timer = setTimeout(() => persistProject(history.current), 350);
     return () => clearTimeout(timer);
   }, [ready, layers, musicClips, asset]);
 
@@ -271,28 +376,65 @@ function App() {
   }
 
   useEffect(() => {
+    const isEditing = (target: EventTarget | null) => target instanceof Element &&
+      target.closest('input, textarea, select, [contenteditable]:not([contenteditable="false"])');
     function onSpace(event: KeyboardEvent) {
-      if (event.target instanceof Element &&
-          event.target.closest('input, textarea, select, [contenteditable]:not([contenteditable="false"])')) return;
-      if (!event.defaultPrevented && !event.isComposing && event.ctrlKey && !event.altKey && !event.metaKey &&
-          !event.shiftKey && frame.current === null && layer?.kind === 'text') {
-        if (event.code === 'KeyC') {
-          copiedText.current = layer;
+      if (isEditing(event.target)) return;
+      if (event.defaultPrevented || event.isComposing || event.keyCode === 229) return;
+      const key = event.key.toLowerCase();
+      if (event.ctrlKey && !event.altKey && !event.metaKey && !event.shiftKey) {
+        if (key === 's') {
           event.preventDefault();
+          if (ready) persistProject(history.current);
           return;
         }
-        if (event.code === 'KeyV' && copiedText.current && !event.repeat) {
+        if (key === 'a') {
           event.preventDefault();
-          addLyric(layer, copiedText.current);
+          const effectsFocused = event.target instanceof Element && event.target.closest('.animation-row, .animation-settings');
+          const targets = effectsFocused && layer
+            ? layer.animations.map(item => ({ layerId: layer.id, animationId: item.id }))
+            : [...layers, ...musicClips].map(item => ({ layerId: item.id! }));
+          setMultiple(targets);
+          return;
+        }
+        if (['c', 'x', 'v', 'd'].includes(key)) {
+          event.preventDefault();
+          if (frame.current !== null || previewDrag.current || groupDrag.current || event.repeat) return;
+          if (key === 'v') {
+            if (clipboard.current) pasteItems(clipboard.current.data, clipboard.current.targets, false);
+          } else if (selectedItems.length) {
+            const data = picked(selectedItems);
+            if (key === 'd') pasteItems(data, selectedItems, true);
+            else {
+              clipboard.current = { data, targets: selectedItems };
+              if (key === 'x') deleteItems();
+            }
+          }
           return;
         }
       }
-      const key = event.key.toLowerCase();
+      if (!event.ctrlKey && !event.altKey && !event.metaKey && !event.shiftKey) {
+        if (key === 'escape' && !groupDrag.current && !previewDrag.current) {
+          setSelection(null);
+          setSelectedMusicId(undefined);
+        }
+        if (key === 'delete' || key === 'backspace') {
+          event.preventDefault();
+          if (selectedItems.length && frame.current === null && !groupDrag.current && !previewDrag.current) deleteItems();
+          return;
+        }
+        if (key === 'arrowleft' || key === 'arrowright') {
+          event.preventDefault();
+          seek(clamp(clock.current + (key === 'arrowleft' ? -FRAME_DURATION : FRAME_DURATION), 0, duration));
+          return;
+        }
+      }
       if (!event.defaultPrevented && !event.isComposing && event.ctrlKey &&
           !event.altKey && !event.metaKey && (key === 'z' || (key === 'y' && !event.shiftKey))) {
-        if (frame.current !== null || previewDrag.current) return;
+        if (frame.current !== null || previewDrag.current || groupDrag.current) return;
         event.preventDefault();
         const restored = history.step(key === 'y' || event.shiftKey);
+        setMultiple([]);
         setEditData(restored);
         if (selection) {
           const restoredLayer = restored.layers.find(item => item.id === selection.layerId);
@@ -315,7 +457,7 @@ function App() {
       }
       if (!event.defaultPrevented && !event.isComposing && !event.repeat && event.code === 'KeyX' &&
           !event.ctrlKey && !event.metaKey && !event.altKey && !event.shiftKey &&
-          frame.current === null && !previewDrag.current && !loadingMusic && ready) {
+          frame.current === null && !previewDrag.current && !groupDrag.current && !loadingMusic && ready) {
         event.preventDefault();
         cut();
         return;
@@ -327,12 +469,12 @@ function App() {
     }
     window.addEventListener('keydown', onSpace);
     return () => window.removeEventListener('keydown', onSpace);
-  }, [duration, musicClips, music, asset, ready, loadingMusic, layers, layer, selection, selectedMusicId, expanded]);
+  });
 
   useEffect(() => {
     function onJump(event: KeyboardEvent) {
       if (event.defaultPrevented || !event.altKey || event.shiftKey || event.ctrlKey || event.metaKey ||
-          event.isComposing || !['ArrowLeft', 'ArrowRight'].includes(event.key)) return;
+          event.isComposing || event.keyCode === 229 || !['ArrowLeft', 'ArrowRight'].includes(event.key)) return;
       if (event.target instanceof Element &&
           event.target.closest('input, textarea, select, [contenteditable]:not([contenteditable="false"])')) return;
       event.preventDefault();
@@ -471,6 +613,7 @@ function App() {
   }
 
   function edit(target: Selection, edge: Edge, delta: number, original?: Layer) {
+    if (edge === 'move' && applyGroupMove(delta)) return;
     updateLayer(target.layerId, item => {
       const source = original ?? item;
       if (!target.animationId) {
@@ -485,6 +628,25 @@ function App() {
         return { ...clip, ...editAnimationSpan(initial, edge, delta, item, duration) };
       }) };
     });
+  }
+
+  function beginTimelineEdit(target: Selection, edge: Edge) {
+    history.begin();
+    const included = selectedItems.some(item => selectionKey(item) === selectionKey(target));
+    if (edge === 'move' && included && selectedItems.length > 1) {
+      groupDrag.current = { data: history.current, targets: selectedItems };
+    } else selectItem(target);
+  }
+
+  function applyGroupMove(delta: number) {
+    const drag = groupDrag.current;
+    if (!drag) return false;
+    if (frame.current === null) {
+      setEditData(history.update(data => ({
+        ...data, ...moveSelection(drag.data.layers, drag.data.musicClips, drag.targets, delta, duration),
+      })));
+    }
+    return true;
   }
 
   function removeSelection() {
@@ -653,7 +815,7 @@ function App() {
             <div><strong>{template?.label ?? layer.name}</strong><small>{template ? layer.name : kinds.find(([kind]) => kind === layer.kind)?.[1]}</small></div>
             <button type="button" className="icon-button delete" aria-label={animation ? 'アニメーションを削除' : 'レイヤーを削除'}
               disabled={playing} onClick={removeSelection}><Icon name="trash" size={17} /></button></div>
-          {animation ? <fieldset className="properties" key={animation.id} disabled={playing}>
+          {animation ? <fieldset className="properties animation-settings" tabIndex={0} key={animation.id} disabled={playing}>
             <h3>アニメーション設定</h3>
             <div className="clip-range">{formatTime(animationRange!.start)} — {formatTime(animationRange!.end)}</div>
             {!template && <p role="status">このテンプレートは現在のバージョンでは再生できません。</p>}
@@ -729,9 +891,10 @@ function App() {
         }
       }} />
     <Timeline layers={layers} selection={musicSelected ? null : selection} expanded={expanded} time={time}
-      duration={duration} musicClips={musicClips} peaks={asset?.peaks} selectedMusicId={selectedMusicId}
-      onSelectMusic={setSelectedMusicId} onEditMusic={(edge, delta, original) => {
+      duration={duration} musicClips={musicClips} peaks={asset?.peaks} selectedItems={selectedItems}
+      onSelectMusic={id => { if (id) selectItem({ layerId: id }); }} onEditMusic={(edge, delta, original) => {
         if (frame.current !== null || loadingMusic) return;
+        if (edge === 'move' && applyGroupMove(delta)) return;
         const next = editMusic(original, edge, delta);
         if (musicClips.some(item => item.id !== original.id &&
           next.start < item.end - 1e-8 && next.end > item.start + 1e-8)) return;
@@ -742,8 +905,8 @@ function App() {
         if (asset) media.current!.currentTime = sourceTime(next, clamp(clock.current, next.start, next.end));
       }}
       playing={playing} onReorder={reorder}
-      onSelect={target => { setSelection(target); setSelectedMusicId(undefined); }} onSeek={seek} onEdit={edit}
-      onEditStart={() => history.begin()} onEditFinish={finishEdit}
+      onSelect={selectItem} onSeek={seek} onEdit={edit}
+      onEditStart={beginTimelineEdit} onEditFinish={cancel => { groupDrag.current = null; finishEdit(cancel); }}
       onRename={(id, name) => {
         if (frame.current !== null) return;
         const previous = layers.find(item => trackId(item) === id)?.name;

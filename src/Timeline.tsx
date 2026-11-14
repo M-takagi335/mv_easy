@@ -6,25 +6,27 @@ import { STEP, animationTimelineSpan, clamp, groupLayers, trackId } from './mode
 import type { MusicClip } from './music';
 import type { Edge, Layer, Reorder, Span } from './model';
 import { registry } from './templates';
+import { selectionKey } from './selection';
+import type { Selection } from './selection';
 
-export type Selection = { layerId: string; animationId?: string };
+export type { Selection } from './selection';
 type TimelineProps = {
   layers: Layer[];
   selection: Selection | null;
+  selectedItems: Selection[];
   expanded: Set<string>;
   time: number;
   duration: number;
   musicClips: MusicClip[];
   peaks?: Float32Array;
-  selectedMusicId?: string;
   onSelectMusic: (id?: string) => void;
   onEditMusic: (edge: Edge, delta: number, original: MusicClip) => void;
   playing: boolean;
   onReorder: (source: Selection, target: Reorder) => void;
   onToggle: (id: string) => void;
-  onSelect: (selection: Selection) => void;
+  onSelect: (selection: Selection, additive?: boolean) => void;
   onSeek: (time: number) => void;
-  onEditStart: () => void;
+  onEditStart: (target: Selection, edge: Edge) => void;
   onEditFinish: (cancel?: boolean) => void;
   onRename: (id: string, name: string) => void;
   onEdit: (selection: Selection, edge: Edge, delta: number, original?: Layer) => void;
@@ -36,9 +38,11 @@ export function formatTime(time: number) {
     + ((centiseconds % 6000) / 100).toFixed(2).padStart(5, '0');
 }
 
-export function Timeline({ layers, selection, expanded, time, duration, musicClips, peaks, selectedMusicId, onSelectMusic, onEditMusic,
+export function Timeline({ layers, selection, selectedItems, expanded, time, duration, musicClips, peaks, onSelectMusic, onEditMusic,
   playing, onReorder, onToggle, onSelect, onSeek, onEdit, onEditStart, onEditFinish, onRename }: TimelineProps) {
   const [drop, setDrop] = useState<Reorder | null>(null);
+  const dragClick = useRef(false);
+  const selectedKeys = new Set(selectedItems.map(selectionKey));
   const groups = useMemo(() => groupLayers(layers), [layers]);
   const [renaming, setRenaming] = useState<{ id: string; name: string }>();
   const [zoom, setZoom] = useState(1);
@@ -151,16 +155,17 @@ export function Timeline({ layers, selection, expanded, time, duration, musicCli
   const dropClass = (id: string) => !playing && drop?.id === id ? (drop.after ? 'drop-after' : 'drop-before') : '';
 
   function drag(event: PointerEvent<HTMLButtonElement>, target: Selection, edge: Edge, original: Layer) {
-    dragBar(event, delta => onEdit(target, edge, delta, original), () => onSelect(target));
+    dragBar(event, delta => onEdit(target, edge, delta, original), target, edge);
   }
 
-  function dragBar(event: PointerEvent<HTMLButtonElement>, update: (delta: number) => void, select: () => void) {
+  function dragBar(event: PointerEvent<HTMLButtonElement>, update: (delta: number) => void, target: Selection, edge: Edge) {
     if (event.button !== 0) return;
     event.stopPropagation();
+    dragClick.current = false;
     if (playing) return;
+    if (event.ctrlKey || event.shiftKey) return;
     const handle = event.currentTarget;
     handle.focus({ preventScroll: true });
-    onEditStart();
     const track = handle.closest('.track')!;
     const initialBounds = track.getBoundingClientRect();
     const start = (event.clientX - initialBounds.left) * duration / initialBounds.width;
@@ -169,7 +174,9 @@ export function Timeline({ layers, selection, expanded, time, duration, musicCli
     function move(moveEvent: globalThis.PointerEvent) {
       if (moveEvent.pointerId === event.pointerId) {
         if (!dragged && Math.abs(moveEvent.clientX - event.clientX) < 3) return;
+        if (!dragged) onEditStart(target, edge);
         dragged = true;
+        dragClick.current = true;
         const bounds = track.getBoundingClientRect();
         const delta = (moveEvent.clientX - bounds.left) * duration / bounds.width - start;
         update(delta);
@@ -187,13 +194,12 @@ export function Timeline({ layers, selection, expanded, time, duration, musicCli
       handle.removeEventListener('pointermove', move);
       handle.removeEventListener('pointercancel', cancel);
       window.removeEventListener('keydown', cancelOnEscape);
-      onEditFinish(cancelled);
+      if (dragged) onEditFinish(cancelled);
     };
     handle.addEventListener('pointermove', move);
     handle.addEventListener('pointercancel', cancel);
     window.addEventListener('keydown', cancelOnEscape);
     handle.addEventListener('lostpointercapture', finish, { once: true });
-    select();
   }
 
   function key(event: KeyboardEvent, target: Selection, edge: Edge) {
@@ -207,7 +213,7 @@ export function Timeline({ layers, selection, expanded, time, duration, musicCli
   }
 
   function bar(layer: Layer, span: Span, target: Selection, caption: string, tone: string, content: ReactNode, timing = span, open?: boolean) {
-    const active = selection?.layerId === target.layerId && selection?.animationId === target.animationId;
+    const active = selectedKeys.has(selectionKey(target));
     const objectBar = target.animationId === undefined;
     return <div className={`clip ${tone} ${active ? 'selected-clip' : ''}`} style={barStyle(span)}
       title={`${formatTime(timing.start)} — ${formatTime(timing.end)}`}>
@@ -219,7 +225,7 @@ export function Timeline({ layers, selection, expanded, time, duration, musicCli
           onSelect(target);
           onToggle(layer.id);
         } : undefined}
-        onClick={() => onSelect(target)}>
+        onClick={event => { if (!dragClick.current) onSelect(target, event.ctrlKey || event.shiftKey); }}>
         {content}
       </button>
       {(['start', 'end'] as const).map(edge => <button key={edge} type="button"
@@ -260,10 +266,9 @@ export function Timeline({ layers, selection, expanded, time, duration, musicCli
             onPointerMove={event => { if (event.currentTarget.hasPointerCapture(event.pointerId)) scrubPosition(event); }}
             onKeyDown={event => {
               if (event.altKey || event.shiftKey || event.ctrlKey || event.metaKey) return;
-              if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return;
+              if (!['Home', 'End'].includes(event.key)) return;
               event.preventDefault();
-              const positions = { ArrowLeft: time - STEP, ArrowRight: time + STEP, Home: 0, End: duration };
-              onSeek(clamp(positions[event.key as keyof typeof positions], 0, duration));
+              onSeek(event.key === 'Home' ? 0 : duration);
             }}>
             {Array.from({ length: 6 }, (_, index) => <span key={index} style={{ left: `${index * 20}%` }}>
               {formatTime(index * duration / 5).slice(0, -3)}
@@ -276,18 +281,19 @@ export function Timeline({ layers, selection, expanded, time, duration, musicCli
           <div className="track" onPointerDown={scrub} onPointerMove={event => {
             if (event.currentTarget.hasPointerCapture(event.pointerId)) scrubPosition(event);
           }}>
-            {musicClips.map(music => <div key={music.id} className={`clip music-clip ${selectedMusicId === music.id ? 'selected-clip' : ''}`} style={barStyle(music)}>
+            {musicClips.map(music => <div key={music.id} className={`clip music-clip ${selectedKeys.has(music.id!) ? 'selected-clip' : ''}`} style={barStyle(music)}>
               {waveform && peaks && <svg className="waveform" aria-hidden="true" preserveAspectRatio="none"
                 viewBox={`${music.inPoint / music.asset.duration * peaks.length} 0 ${(music.end - music.start) / music.asset.duration * peaks.length} 2`}>
                 <path d={waveform} vectorEffect="non-scaling-stroke" />
               </svg>}
-              <button type="button" className="clip-body" aria-pressed={selectedMusicId === music.id} title={music.asset.name}
-                onClick={() => onSelectMusic(music.id)} onPointerDown={event => dragBar(event, delta => onEditMusic('move', delta, music), () => onSelectMusic(music.id))}>
+              <button type="button" className="clip-body" aria-pressed={selectedKeys.has(music.id!)} title={music.asset.name}
+                onClick={event => { if (!dragClick.current) onSelect({ layerId: music.id! }, event.ctrlKey || event.shiftKey); }}
+                onPointerDown={event => dragBar(event, delta => onEditMusic('move', delta, music), { layerId: music.id! }, 'move')}>
                 {music.muted ? '消音 · ' : ''}{music.asset.name}{!peaks && '（再リンクが必要）'}
               </button>
               {(['start', 'end'] as const).map(edge => <button key={edge} type="button" className={`clip-edge ${edge}`}
                 aria-label={`音楽の${edge === 'start' ? '開始' : '終了'}端点`}
-                onPointerDown={event => dragBar(event, delta => onEditMusic(edge, delta, music), () => onSelectMusic(music.id))}
+                onPointerDown={event => dragBar(event, delta => onEditMusic(edge, delta, music), { layerId: music.id! }, edge)}
                 onKeyDown={event => {
                   if (playing || !event.altKey || !event.shiftKey || event.ctrlKey || event.metaKey ||
                       !['ArrowLeft', 'ArrowRight'].includes(event.key)) return;
@@ -344,7 +350,7 @@ export function Timeline({ layers, selection, expanded, time, duration, musicCli
               const template = registry.get(animation.template);
               const outside = timing.start < layer.start || timing.end > layer.end;
               const label = template?.label ?? animation.template;
-              const selected = active && selection?.animationId === animation.id;
+              const selected = selectedKeys.has(selectionKey({ layerId: layer.id, animationId: animation.id }));
               return <div key={animation.id} data-animation={animation.id}
                 className={`track-row animation-row ${selected ? 'active-row' : ''} ${dropClass(animation.id)}`}>
                 <div className="layer-label">

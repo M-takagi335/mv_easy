@@ -3,6 +3,7 @@ import { test } from 'node:test';
 import { defaults, evaluate } from '../src/animation.ts';
 import { previewGeometry } from '../src/geometry.ts';
 import { createHistory } from '../src/history.ts';
+import { moveSelection } from '../src/selection.ts';
 import { editMusic, sourceTime, splitMusic } from '../src/music.ts';
 import { adjacentEndpoint, animationTimelineSpan, editAnimationSpan, editLayerSpan, editSpan, initialAnimationSpan,
   migrateAbsoluteAnimations, newLayer, packLayers, reorderById, splitLayer, unpackLayers } from '../src/model.ts';
@@ -11,6 +12,19 @@ import { registry, templates } from '../src/templates.ts';
 function clip(template, start, end) {
   return { id: template, template, start, end, params: defaults(registry.get(template)) };
 }
+
+test('a grouped move preserves offsets, clamps the group together and moves a selected child only once', () => {
+  const first = { ...newLayer('text', 1), start: 1, end: 5, animations: [clip('grow', 1, 2)] };
+  const second = { ...newLayer('rectangle', 2), start: 7, end: 12, animations: [clip('rotate', 0, 1)] };
+  const third = { ...newLayer('ellipse', 3), start: 2, end: 12, animations: [clip('fade-in', 4, 6)] };
+  const moved = moveSelection([first, second, third], [], [
+    { layerId: first.id }, { layerId: first.id, animationId: 'grow' }, { layerId: second.id },
+    { layerId: third.id, animationId: 'fade-in' },
+  ], 6, 15).layers;
+  assert.deepEqual(moved.map(item => item.start), [4, 10, 2]);
+  assert.deepEqual(moved.map(item => animationTimelineSpan(item, item.animations[0])),
+    [{ start: 5, end: 6 }, { start: 10, end: 11 }, { start: 9, end: 11 }]);
+});
 
 test('history records one drag, skips cancelled and unchanged edits, and clears redo after a new edit', () => {
   const history = createHistory({ start: 3, label: '歌詞' }, (a, b) => a.start === b.start && a.label === b.label);
