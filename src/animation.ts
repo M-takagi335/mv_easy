@@ -1,5 +1,5 @@
 import { animationTimelineSpan, clamp } from './model.ts';
-import type { Layer, Parameters } from './model.ts';
+import type { Animation, Layer, Parameters } from './model.ts';
 
 export type Pose = {
   x: number; y: number; scale: number; rotation: number; opacity: number; color: string;
@@ -47,6 +47,8 @@ export function defaults(template: Template): Parameters {
   return Object.fromEntries(template.controls.map(control => [control.key, control.initial]));
 }
 
+const endpointSamples = new WeakMap<Animation, { template: Template; effect: Contribution }>();
+
 function mixColor(from: string, to: string, progress: number): string {
   const a = parseInt(from.slice(1), 16);
   const b = parseInt(to.slice(1), 16);
@@ -61,13 +63,22 @@ export function evaluate(layer: Layer, time: number, registry: ReadonlyMap<strin
   const pose: Pose = { x: layer.x, y: layer.y, scale: 1, rotation: layer.rotation, opacity: 1, color: layer.color };
   if (time < layer.start || time > layer.end || (layer.endExclusive && time === layer.end)) return { ...pose, opacity: 0 };
   for (const animation of layer.animations) {
-    const template = registry.get(animation.template);
     const { start, end } = animationTimelineSpan(layer, animation);
-    if (!template || time < start || (template.activeOnly && time >= end)) continue;
+    if (time < start) continue;
+    const template = registry.get(animation.template);
+    if (!template || (template.activeOnly && time >= end)) continue;
     const [from, to] = animation.phase ?? [0, 1];
     const fraction = end === start ? 1 : clamp((time - start) / (end - start), 0, 1);
     const progress = from + (to - from) * fraction;
-    const effect = template.sample(progress, animation.params);
+    let effect: Contribution;
+    if (fraction === 1) {
+      const cached = endpointSamples.get(animation);
+      if (cached?.template === template) effect = cached.effect;
+      else {
+        effect = template.sample(progress, animation.params);
+        endpointSamples.set(animation, { template, effect });
+      }
+    } else effect = template.sample(progress, animation.params);
     pose.x += effect.x ?? 0;
     pose.y += effect.y ?? 0;
     pose.rotation += effect.rotation ?? 0;
@@ -91,9 +102,17 @@ export function evaluate(layer: Layer, time: number, registry: ReadonlyMap<strin
 
 export function sampleTrails(layer: Layer, time: number, pose: Pose, registry: ReadonlyMap<string, Template>) {
   const copies: Pose[] = [];
-  for (const trail of pose.trails ?? []) {
+  const trails = pose.trails ?? [];
+  // Stacked trails can request the same historical pose with different tint or opacity.
+  const sampled = trails.length > 1 ? new Map<number, Pose>() : undefined;
+  for (const trail of trails) {
     for (let index = 1; index <= trail.count && copies.length < 12; index++) {
-      const past = evaluate(layer, time - trail.interval * index, registry, false);
+      const sampleTime = time - trail.interval * index;
+      let past = sampled?.get(sampleTime);
+      if (!past) {
+        past = evaluate(layer, sampleTime, registry, false);
+        sampled?.set(sampleTime, past);
+      }
       if (past.opacity <= 0 || past.scale <= 0) continue;
       copies.push({ ...past, color: trail.color ?? past.color,
         opacity: past.opacity * trail.opacity * (1 - (index - 1) / trail.count) });

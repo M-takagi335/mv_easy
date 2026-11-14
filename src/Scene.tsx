@@ -16,7 +16,8 @@ export function Scene({ groups, time, fontProvider, renderObject }: {
 }) {
   return groups.flatMap(group => {
     const nextStarts = new Set(group.map(item => item.start));
-    return group.filter(item => item.end !== time || !nextStarts.has(time));
+    return group.filter(item => time >= item.start && time <= item.end &&
+      (time !== item.end || (!item.endExclusive && !nextStarts.has(time))));
   }).reverse().map(item => {
     const pose = evaluate(item, time, registry);
     const pastPoses = pose.trails ? sampleTrails(item, time, pose, registry) : [];

@@ -45,3 +45,7 @@ export function createHistory<T>(initial: T, equal: (a: T, b: T) => boolean, lim
     },
   };
 }
+export function equalProjectItems<T>(before: T[], after: T[]) {
+  return before === after || (before.length === after.length && before.every((item, index) =>
+    item === after[index] || JSON.stringify(item) === JSON.stringify(after[index])));
+}

@@ -18,6 +18,8 @@ import type { RandomGenre } from './randomAnimation';
 import { applyAutomaticAnimations } from './autoAnimation';
 import type { AnimationDensity } from './autoAnimation';
 import { Scene } from './Scene';
+import { createPlayhead, usePlayhead } from './playhead';
+import type { Playhead } from './playhead';
 import { FontPicker } from './FontPicker';
 import { createBrowserFontProvider, resolveTextFont } from './fonts';
 import type { FontOption } from './fonts';
@@ -29,7 +31,7 @@ import { defaultSettings, downloadFile, makeProjectFile, readProjectFile, unique
 import type { Settings } from './projectFile';
 import type { Project } from './project';
 import { ExportDialog } from './ExportDialog';
-import { createHistory } from './history';
+import { createHistory, equalProjectItems } from './history';
 import { independentSelection, moveSelection, selectionKey } from './selection';
 import './style.css';
 
@@ -71,13 +73,20 @@ function NumberField({ label, value, min, max, step = 1, onChange }: {
     }} onBlur={commit} onKeyDown={event => { if (event.key === 'Enter') event.currentTarget.blur(); }} /></label>;
 }
 
+function PreviewScene({ playhead, ...props }: Omit<React.ComponentProps<typeof Scene>, 'time'> & { playhead: Playhead }) {
+  return <Scene {...props} time={usePlayhead(playhead)} />;
+}
+
+function Timecode({ playhead }: { playhead: Playhead }) {
+  return <strong>{formatTime(usePlayhead(playhead))}</strong>;
+}
+
 function App() {
   const [fontProvider] = useState(createBrowserFontProvider);
   const [fonts, setFonts] = useState<FontOption[]>([]);
   type EditData = { layers: Layer[]; musicClips: MusicClip[]; asset?: MusicAsset };
   const [history] = useState(() => createHistory<EditData>({ layers: exampleLayers(), musicClips: [] },
-    (a, b) => a.asset === b.asset && JSON.stringify(a.layers) === JSON.stringify(b.layers) &&
-      JSON.stringify(a.musicClips) === JSON.stringify(b.musicClips)));
+    (a, b) => a.asset === b.asset && equalProjectItems(a.layers, b.layers) && equalProjectItems(a.musicClips, b.musicClips)));
   const [{ layers, musicClips, asset }, setEditData] = useState(history.current);
   const [settings, setSettings] = useState(defaultSettings);
   const saved = useRef({ data: history.current, settings: defaultSettings });
@@ -95,7 +104,7 @@ function App() {
   function finishEdit(cancel = false) { setEditData(history.finish(cancel)); }
   const [selection, setPrimarySelection] = useState<Selection | null>(() => ({ layerId: layers[0].id }));
   const [expanded, setExpanded] = useState(() => new Set([layers[0].id]));
-  const [time, setTime] = useState(2.4);
+  const [playhead] = useState(() => createPlayhead(2.4));
   const [selectedMusicId, setSelectedMusicId] = useState<string>();
   const music = musicClips.find(clip => clip.id === selectedMusicId);
   const musicSelected = music !== undefined;
@@ -125,7 +134,7 @@ function App() {
   } | null>(null);
   const resize = useRef<{ y: number; height: number; value: number } | null>(null);
   const addMenu = useRef<HTMLDivElement>(null);
-  const clock = useRef(time);
+  const clock = useRef(playhead.read());
   const frame = useRef<number | null>(null);
   const playbackSession = useRef(0);
   const nextLayer = useRef(5);
@@ -253,7 +262,7 @@ function App() {
     clipboard.current = null;
     nextLayer.current = project.layers.length + 1;
     clock.current = 0;
-    setTime(0);
+    playhead.update(0);
   }
 
   useEffect(() => {
@@ -401,7 +410,7 @@ function App() {
       if (active && asset && !media.current!.paused) {
         const position = clamp(active.start + media.current!.currentTime - active.inPoint, active.start, active.end);
         clock.current = position;
-        setTime(position);
+        playhead.update(position);
       }
       pause();
       return;
@@ -410,7 +419,7 @@ function App() {
     finishPreviewDrag();
     if (clock.current >= duration) {
       clock.current = 0;
-      setTime(0);
+      playhead.update(0);
     }
     let began = performance.now();
     let offset = clock.current;
@@ -455,7 +464,7 @@ function App() {
         startAudio(clips[cursor], position);
       }
       clock.current = position;
-      setTime(position);
+      playhead.update(position);
       if (position < duration) frame.current = requestAnimationFrame(update);
       else pause();
     }
@@ -545,7 +554,7 @@ function App() {
         const limit = Math.max(DURATION, ...restored.layers.map(item => item.end), ...restored.musicClips.map(item => item.end));
         if (clock.current > limit) {
           clock.current = limit;
-          setTime(limit);
+          playhead.update(limit);
         }
         return;
       }
@@ -596,7 +605,7 @@ function App() {
     const clip = musicAt(position) ?? musicClips.find(item => item.start > position);
     if (clip && asset) media.current!.currentTime = sourceTime(clip, Math.max(position, clip.start));
     clock.current = position;
-    setTime(position);
+    playhead.update(position);
   }
 
   function openLayer(id: string) {
@@ -871,7 +880,7 @@ function App() {
         <div className="monitor-head"><h2>プレビュー</h2><span>{settings.resolution * 16 / 9} × {settings.resolution}</span></div>
         <div className="stage">
           <div className="canvas" ref={canvas} style={{ background: settings.background }}>
-            <Scene groups={sceneGroups} time={time} fontProvider={fontProvider} renderObject={(item, pose, props) => {
+            <PreviewScene playhead={playhead} groups={sceneGroups} fontProvider={fontProvider} renderObject={(item, pose, props) => {
               const selected = !playing && layer?.id === item.id;
               const pointerHandlers = {
                 onPointerMove: movePreviewDrag,
@@ -894,7 +903,7 @@ function App() {
           </div>
         </div>
         <div className="transport">
-          <div className="timecode"><Icon name="clock" size={15} /><strong>{formatTime(time)}</strong><span>/ {formatTime(duration)}</span></div>
+          <div className="timecode"><Icon name="clock" size={15} /><Timecode playhead={playhead} /><span>/ {formatTime(duration)}</span></div>
           <div className="transport-buttons">
             <button type="button" className="icon-button" aria-label="最初へ" onClick={() => seek(0)}><Icon name="first" /></button>
             <button type="button" className="primary play-button" aria-label={playing ? '一時停止' : '再生'}
@@ -1028,7 +1037,7 @@ function App() {
           try { localStorage.setItem(heightKey, String(drag.value)); } catch { /* Storage may be unavailable. */ }
         }
       }} />
-    <div inert={loadingProject} style={{ display: 'contents' }}><Timeline layers={layers} selection={musicSelected ? null : selection} expanded={expanded} time={time}
+    <div inert={loadingProject} style={{ display: 'contents' }}><Timeline layers={layers} selection={musicSelected ? null : selection} expanded={expanded} playhead={playhead}
       duration={duration} musicClips={musicClips} peaks={asset?.peaks} selectedItems={selectedItems}
       onSelectMusic={id => { if (id) selectItem({ layerId: id }); }} onEditMusic={(edge, delta, original) => {
         if (frame.current !== null || loadingMusic) return;

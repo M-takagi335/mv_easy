@@ -20,7 +20,16 @@ export function rememberTemplate(ids: string[], id: string) {
 }
 
 const normalized = (value: string) => value.normalize('NFKC').toLowerCase();
+const labels = new WeakMap<Template, string>();
 export function searchTemplates(templates: Template[], query: string) {
   const term = normalized(query.trim());
-  return templates.filter(item => normalized(item.label).includes(term));
+  if (!term) return templates;
+  return templates.filter(item => {
+    let label = labels.get(item);
+    if (label === undefined) {
+      label = normalized(item.label);
+      labels.set(item, label);
+    }
+    return label.includes(term);
+  });
 }

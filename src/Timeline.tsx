@@ -1,4 +1,4 @@
-import { Fragment, useEffect, useMemo, useRef, useState } from 'react';
+import { Fragment, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { flushSync } from 'react-dom';
 import type { CSSProperties, KeyboardEvent, PointerEvent, ReactNode } from 'react';
 import { Icon } from './Icon';
@@ -8,6 +8,7 @@ import type { Edge, Layer, Reorder, Span } from './model';
 import { registry } from './templates';
 import { selectionKey } from './selection';
 import type { Selection } from './selection';
+import type { Playhead } from './playhead';
 
 export type { Selection } from './selection';
 type TimelineProps = {
@@ -15,7 +16,7 @@ type TimelineProps = {
   selection: Selection | null;
   selectedItems: Selection[];
   expanded: Set<string>;
-  time: number;
+  playhead: Playhead;
   duration: number;
   musicClips: MusicClip[];
   peaks?: Float32Array;
@@ -38,7 +39,7 @@ export function formatTime(time: number) {
     + ((centiseconds % 6000) / 100).toFixed(2).padStart(5, '0');
 }
 
-export function Timeline({ layers, selection, selectedItems, expanded, time, duration, musicClips, peaks, onSelectMusic, onEditMusic,
+export function Timeline({ layers, selection, selectedItems, expanded, playhead, duration, musicClips, peaks, onSelectMusic, onEditMusic,
   playing, onReorder, onToggle, onSelect, onSeek, onEdit, onEditStart, onEditFinish, onRename }: TimelineProps) {
   const [drop, setDrop] = useState<Reorder | null>(null);
   const dragClick = useRef(false);
@@ -52,7 +53,23 @@ export function Timeline({ layers, selection, selectedItems, expanded, time, dur
   const timelineRef = useRef<HTMLElement>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
   const rulerRef = useRef<HTMLDivElement>(null);
+  const markerRef = useRef<HTMLDivElement>(null);
+  const playheadRef = useRef<HTMLDivElement>(null);
   const previousAnimationIds = useRef<Set<string>>(new Set());
+
+  useLayoutEffect(() => {
+    const ruler = rulerRef.current!;
+    const marker = markerRef.current!;
+    const line = playheadRef.current!;
+    const update = () => {
+      const time = playhead.read();
+      const left = `${100 * time / duration}%`;
+      marker.style.left = line.style.left = left;
+      ruler.setAttribute('aria-valuenow', String(Number(time.toFixed(2))));
+    };
+    update();
+    return playhead.subscribe(update);
+  }, [playhead, duration]);
 
   useEffect(() => {
     const ids = new Set(layers.flatMap(layer => layer.animations.map(animation => animation.id)));
@@ -272,7 +289,7 @@ export function Timeline({ layers, selection, selectedItems, expanded, time, dur
         <div className="ruler-row">
           <div className="layer-column">レイヤー <span>{groups.length}</span></div>
           <div ref={rulerRef} className="ruler" role="slider" tabIndex={0} aria-label="再生位置" aria-valuemin={0} aria-valuemax={duration}
-            aria-valuenow={Number(time.toFixed(2))} onPointerDown={scrub}
+            onPointerDown={scrub}
             onPointerMove={event => { if (event.currentTarget.hasPointerCapture(event.pointerId)) scrubPosition(event); }}
             onKeyDown={event => {
               if (event.altKey || event.shiftKey || event.ctrlKey || event.metaKey) return;
@@ -283,7 +300,7 @@ export function Timeline({ layers, selection, selectedItems, expanded, time, dur
             {Array.from({ length: 6 }, (_, index) => <span key={index} style={{ left: `${index * 20}%` }}>
               {formatTime(index * duration / 5).slice(0, -3)}
             </span>)}
-            <div className="ruler-marker" style={{ left: `${100 * time / duration}%` }} aria-hidden="true" />
+            <div className="ruler-marker" ref={markerRef} aria-hidden="true" />
           </div>
         </div>
         {musicClips.length > 0 && <div className="track-row music-row">
@@ -384,7 +401,7 @@ export function Timeline({ layers, selection, selectedItems, expanded, time, dur
           </div>;
         })}
         {!layers.length && <p className="empty-timeline">＋追加から最初のレイヤーを作成できます。</p>}
-        <div className="playhead-area" aria-hidden="true"><div className="playhead" style={{ left: `${100 * time / duration}%` }} /></div>
+        <div className="playhead-area" aria-hidden="true"><div className="playhead" ref={playheadRef} /></div>
       </div>
     </div>
   </section>;

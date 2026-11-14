@@ -13,6 +13,23 @@ function clip(template, start, end) {
   return { id: template, template, start, end, params: defaults(registry.get(template)) };
 }
 
+test('held endpoint samples can be reused without changing seek or parameter edits', () => {
+  let calls = 0;
+  const template = { ...registry.get('rotate'), sample: (p, params) => {
+    calls++;
+    return { rotation: p * params.angle };
+  } };
+  const lookup = new Map([['rotate', template]]);
+  const animation = { ...clip('rotate', 0, 2), phase: [0, 0.5] };
+  const layer = { ...newLayer('text', 1), rotation: 0, start: 0, end: 6, animations: [animation] };
+  assert.equal(evaluate(layer, 4, lookup).rotation, 180);
+  assert.equal(evaluate(layer, 2, lookup).rotation, 180);
+  assert.equal(calls, 1);
+  assert.equal(evaluate(layer, 1, lookup).rotation, 90);
+  const edited = { ...layer, animations: [{ ...animation, params: { angle: 100 } }] };
+  assert.equal(evaluate(edited, 4, lookup).rotation, 50);
+});
+
 test('new 3D, mask and glyph templates keep phase through splitting and project serialization', () => {
   const layer = { ...newLayer('text', 1), text: '歌詞🌸\n次の行', start: 0, end: 5,
     animations: ['tumble', 'iris-entry', 'glyph-firework'].map(id => clip(id, 1, 4)) };
