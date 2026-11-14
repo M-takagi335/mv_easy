@@ -111,10 +111,11 @@ export const TemplateLibrary = memo(function TemplateLibrary({ kind, playing, on
         const expanded = open === category;
         const items = expanded ? folderItems(category) : [];
         return <div key={category}>
-        <button className="template-folder" type="button" aria-expanded={open === category}
-          onClick={() => setOpen(open === category ? null : category)}>
-          <Icon name={open === category ? 'down' : 'chevron'} size={14} />{category}
-        </button>
+          <button className="template-folder" type="button" aria-expanded={expanded}
+            onClick={() => setOpen(expanded ? null : category)}>
+            <Icon name={expanded ? 'down' : 'chevron'} size={14} />{category}
+            {category === 'すべて' && <span className="template-count" aria-hidden="true">{templates.length}件</span>}
+          </button>
           {expanded && (items.length ? cards(items) : <p>まだテンプレートがありません。</p>)}
         </div>;
       })}</div>}

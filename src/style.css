@@ -71,6 +71,7 @@ svg { flex-shrink: 0; vertical-align: middle; }
 .template-folder { display: flex; align-items: center; gap: 6px; width: 100%; padding: 7px 3px; text-align: left; font-size: 12px; }
 .template-folder:hover, .template-folder[aria-expanded="true"] { color: var(--accent); }
 .template-folders .template-grid { margin-bottom: 5px; }
+.template-count { margin-inline-start: auto; color: var(--muted); }
 .animated-text { width: 100%; white-space: pre-wrap; }
 .animated-glyph { display: inline-block; white-space: pre-wrap; }
 .template-card {
